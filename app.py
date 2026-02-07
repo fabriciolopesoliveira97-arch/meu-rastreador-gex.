@@ -44,3 +44,14 @@ fig.add_hline(y=levels['call'], line_color="red", line_width=2, annotation_text=
 
 fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False)
 st.plotly_chart(fig, use_container_width=True)
+with st.expander("📖 Como interpretar este Rastreador?"):
+    st.markdown("""
+    ### 🛡️ O que é Supressão?
+    * **SUPRESSÃO (Gama Positiva):** O mercado está calmo. Os grandes players atuam contra a tendência para estabilizar o preço. Ideal para operações de retorno à média.
+    * **EXPANSÃO (Gama Negativa):** Alerta de perigo! A volatilidade aumenta e os movimentos podem ser explosivos.
+    
+    ### 🎯 Entendendo os Alvos:
+    * **Gama Zero:** É o divisor de águas. Acima dele estamos seguros; abaixo dele o pânico pode começar.
+    * **Put Wall (Parede de Baixo):** Funciona como um suporte muito forte onde o preço costuma bater e subir.
+    * **Call Wall (Parede de Cima):** Funciona como uma resistência forte onde o preço costuma bater e cair.
+    """)
