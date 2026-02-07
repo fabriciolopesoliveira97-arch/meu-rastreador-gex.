@@ -15,7 +15,8 @@ def get_gamma_levels():
     }
 
 st.title("🛡️ Nasdaq 100 Institutional Tracker")
-
+if st.button('🔄 Atualizar Dados'):
+    st.rerun()
 # Busca preço real do QQQ (Nasdaq ETF)
 ticker = yf.Ticker("QQQ")
 df = ticker.history(period="1d", interval="5m")
