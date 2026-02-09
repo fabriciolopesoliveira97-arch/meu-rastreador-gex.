@@ -6,27 +6,43 @@ import plotly.graph_objects as go
 # Configuração da página estilo Dark
 st.set_page_config(page_title="GEX Tracker Nasdaq", layout="wide")
 
-# Níveis institucionais (Conforme as imagens que você me enviou)
+def get_gamma_data(ticker_symbol):
+    try:
+        tk = yf.Ticker(ticker_symbol)
+        expiry = tk.options[0]
+        options = tk.option_chain(expiry)
+        calls = options.calls[['strike', 'openInterest', 'lastPrice']].copy()
+        puts = options.puts[['strike', 'openInterest', 'lastPrice']].copy()
+        
+        calls['GEX'] = calls['openInterest'] * calls['lastPrice'] * 0.1
+        puts['GEX'] = puts['openInterest'] * puts['lastPrice'] * -0.1
+        return calls, puts
+    except Exception as e:
+        return pd.DataFrame(), pd.DataFrame()
+
 def get_gamma_levels():
-    return {
-        "zero": 602.24,
-        "put": 600.17,
-        "call": 610.00
-    }
+    try:
+        calls, puts = get_gamma_data("QQQ")
+        if calls.empty or puts.empty:
+            return {"zero": 602.24, "put": 600.17, "call": 610.00}
+            
+        # Calcula Net GEX por strike para achar o Zero Gamma
+        df_total = pd.merge(calls, puts, on='strike', suffixes=('_c', '_p'))
+        df_total['net_gex'] = df_total['GEX_c'] + df_total['GEX_p']
+        
+        # Acha o ponto onde a soma dos Gammas cruza o zero
+        zero_gamma = df_total.iloc[(df_total['net_gex']).abs().argsort()[:1]]['strike'].values[0]
+        
+        # Acha as maiores concentrações (Walls)
+        put_wall = puts.iloc[puts['GEX'].abs().idxmax()]['strike']
+        call_wall = calls.iloc[calls['GEX'].abs().idxmax()]['strike']
+        
+        return {"zero": zero_gamma, "put": put_wall, "call": call_wall}
+    except:
+        # Valores de segurança caso a bolsa esteja fechada
+        return {"zero": 602.24, "put": 600.17, "call": 610.00}
 
 st.title("🛡️ Nasdaq 100 Institutional Tracker")
-if st.button('🔄 Atualizar Dados'):
-    st.rerun()
-def get_gamma_data(ticker_symbol):
-    tk = yf.Ticker(ticker_symbol)
-    expiry = tk.options[0]
-    options = tk.option_chain(expiry)
-    calls = options.calls[['strike', 'openInterest', 'lastPrice']].copy()
-    puts = options.puts[['strike', 'openInterest', 'lastPrice']].copy()
-    calls['GEX'] = calls['openInterest'] * calls['lastPrice'] * 0.1
-    puts['GEX'] = puts['openInterest'] * puts['lastPrice'] * -0.1
-    return calls, puts
-
 # Busca preço real do QQQ (Nasdaq ETF)
 ticker = yf.Ticker("QQQ")
 df = ticker.history(period="1d", interval="5m")
