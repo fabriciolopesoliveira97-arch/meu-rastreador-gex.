@@ -105,14 +105,37 @@ try:
         marker_color='#ff4b4b'
     ))
 
+        # Ajuste do Layout e Zoom
     fig_hist.update_layout(
         template="plotly_dark", 
         barmode='relative',
         xaxis_title="Strike Price ($)",
-        yaxis_title="Exposição Estimada",
-        height=450
+        yaxis_title="Exposição Estimada (Gamma)",
+        height=500,
+        # FOCO: Centraliza o gráfico no preço atual
+        xaxis=dict(range=[current_price * 0.95, current_price * 1.05]),
+        hovermode="x unified"
     )
+    
+    # Adicionando os valores em cima das barras para facilitar a leitura
+    fig_hist.update_traces(texttemplate='%{y:.2s}', textposition='outside')
+    
+    # LINHA DO PREÇO ATUAL (SPOT)
+    fig_hist.add_vline(
+        x=current_price, 
+        line_width=3, 
+        line_dash="dash", 
+        line_color="yellow",
+        annotation_text=f"Preço Spot: ${current_price:.2f}",
+        annotation_position="top left"
+    )
+
+        # Mantenha apenas UMA destas linhas
     st.plotly_chart(fig_hist, use_container_width=True)
-except:
-    st.info("Carregando histograma... (Pode levar alguns segundos na primeira vez)")
+
+except Exception as e:
+    st.info(f"Aguardando dados da cadeia de opções... {e}")
+
+except Exception as e:
+    st.info(f"Aguardando dados da cadeia de opções... {e}")
 
