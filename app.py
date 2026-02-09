@@ -17,6 +17,16 @@ def get_gamma_levels():
 st.title("🛡️ Nasdaq 100 Institutional Tracker")
 if st.button('🔄 Atualizar Dados'):
     st.rerun()
+def get_gamma_data(ticker_symbol):
+    tk = yf.Ticker(ticker_symbol)
+    expiry = tk.options[0]
+    options = tk.option_chain(expiry)
+    calls = options.calls[['strike', 'openInterest', 'lastPrice']].copy()
+    puts = options.puts[['strike', 'openInterest', 'lastPrice']].copy()
+    calls['GEX'] = calls['openInterest'] * calls['lastPrice'] * 0.1
+    puts['GEX'] = puts['openInterest'] * puts['lastPrice'] * -0.1
+    return calls, puts
+
 # Busca preço real do QQQ (Nasdaq ETF)
 ticker = yf.Ticker("QQQ")
 df = ticker.history(period="1d", interval="5m")
@@ -33,7 +43,7 @@ c1.metric("Status Mercado", status)
 c2.metric("Zero Gamma", f"${levels['zero']}")
 c3.metric("Put Wall", f"${levels['put']}")
 c4.metric("Call Wall", f"${levels['call']}")
-
+# Abaixo do seu st.plotly_chart(fig, ...) na linha 46
 st.markdown(f"### Cenário Atual: <span style='color:{status_color}'>{status}</span>", unsafe_allow_html=True)
 
 # Gráfico de Preço com as Linhas
@@ -55,3 +65,38 @@ with st.expander("📖 Como interpretar este Rastreador?"):
     * **Put Wall (Parede de Baixo):** Funciona como um suporte muito forte onde o preço costuma bater e subir.
     * **Call Wall (Parede de Cima):** Funciona como uma resistência forte onde o preço costuma bater e cair.
     """)
+    # --- COLE ESTE BLOCO NO FINAL DO ARQUIVO ---
+st.divider()
+st.subheader("📊 Histograma de Gamma Exposure")
+
+try:
+    # Chamando a função que você criou lá na linha 20
+    calls_data, puts_data = get_gamma_data("QQQ")
+
+    fig_hist = go.Figure()
+    # Barras de Calls (Verde)
+    fig_hist.add_trace(go.Bar(
+        x=calls_data['strike'], 
+        y=calls_data['GEX'], 
+        name='Calls (Apostas de Alta)', 
+        marker_color='#00ffcc'
+    ))
+    # Barras de Puts (Vermelho)
+    fig_hist.add_trace(go.Bar(
+        x=puts_data['strike'], 
+        y=puts_data['GEX'], 
+        name='Puts (Apostas de Baixa)', 
+        marker_color='#ff4b4b'
+    ))
+
+    fig_hist.update_layout(
+        template="plotly_dark", 
+        barmode='relative',
+        xaxis_title="Strike Price ($)",
+        yaxis_title="Exposição Estimada",
+        height=450
+    )
+    st.plotly_chart(fig_hist, use_container_width=True)
+except:
+    st.info("Carregando histograma... (Pode levar alguns segundos na primeira vez)")
+
