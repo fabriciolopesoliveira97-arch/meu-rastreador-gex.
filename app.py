@@ -69,12 +69,12 @@ fig.add_hline(y=levels['put'], line_color="green", line_width=2, annotation_text
 fig.add_hline(y=levels['call'], line_color="red", line_width=2, annotation_text="Call Wall")
 
 fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False)
-st.plotly_chart(fig, use_container_width=True)
-# --- Medidor de Risco (Colar na Linha 73) ---
+    st.plotly_chart(fig, use_container_width=True) # <--- Linha 72 já existente
+
+# --- Medidor de Risco Corrigido (Começa na Linha 73) ---
 st.divider()
 st.subheader("⚡ Medidor de Risco e Volatilidade")
 
-# Cálculo da distância até a Put Wall
 distancia_suporte = ((current_price - levels['put']) / levels['put']) * 100
 
 col_vix1, col_vix2 = st.columns(2)
@@ -86,10 +86,10 @@ with col_vix1:
         st.success(f"🛡️ ACIMA DO SUPORTE\n\nPreço está {distancia_suporte:.2f}% acima da zona de proteção.")
 
 with col_vix2:
-    if gex_total < 0:
-        st.warning("🔥 RISCO: GAMA NEGATIVO\n\nCenário de EXPANSÃO. Movimentos podem ser explosivos e rápidos.")
+    if status == "EXPANSÃO":
+        st.warning("🔥 RISCO: GAMA NEGATIVO\n\nCenário de EXPANSÃO. Movimentos podem ser explosivos.")
     else:
-        st.info("🟢 RISCO: GAMA POSITIVO\n\nCenário de SUPRESSÃO. Tendência de mercado mais estável e lenta.")
+        st.info("🟢 RISCO: GAMA POSITIVO\n\nCenário de SUPRESSÃO. Mercado mais estável.")
 
 with st.expander("📖 Como interpretar este Monitor"):
         st.markdown("""
