@@ -124,8 +124,7 @@ try:
         hovermode="x unified"
     )
     
-    # Linha do Preço Atual
-        # Linha do Preço Atual (SPOT)
+       # Linha do Preço Atual (SPOT)
     fig_hist.add_vline(
         x=current_price, 
         line_width=3, 
@@ -135,4 +134,7 @@ try:
         annotation_position="top left"
     )
 
-    st.plotly_chart(fig_hist, use_container_width=True)
+    st.plotly_chart(fig_hist, 
+use_container_width=True)
+except Exception as e:
+    st.info(f"Aguardando dados... {e}")
