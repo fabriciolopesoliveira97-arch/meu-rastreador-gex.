@@ -125,9 +125,14 @@ try:
     )
     
     # Linha do Preço Atual
-    fig_hist.add_vline(x=current_price, line_width=3, line_dash="dash", line_color="yellow")
+        # Linha do Preço Atual (SPOT)
+    fig_hist.add_vline(
+        x=current_price, 
+        line_width=3, 
+        line_dash="dash", 
+        line_color="yellow",
+        annotation_text=f"Preço Spot: ${current_price:.2f}",
+        annotation_position="top left"
+    )
 
     st.plotly_chart(fig_hist, use_container_width=True)
-
-except Exception as e:
-    st.info(f"Aguardando dados... {e}")
