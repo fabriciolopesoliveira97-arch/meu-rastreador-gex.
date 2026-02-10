@@ -69,7 +69,7 @@ fig.add_hline(y=levels['put'], line_color="green", line_width=2, annotation_text
 fig.add_hline(y=levels['call'], line_color="red", line_width=2, annotation_text="Call Wall")
 
 fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False)
-    st.plotly_chart(fig, use_container_width=True) # <--- Linha 72 já existente
+st.plotly_chart(fig, use_container_width=True) # <--- Linha 72 já existente
 
 # --- Medidor de Risco Corrigido (Começa na Linha 73) ---
 st.divider()
