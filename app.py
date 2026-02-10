@@ -79,15 +79,60 @@ with st.expander("📖 Como interpretar este Rastreador?"):
     ### 🎯 Entendendo os Alvos:
     * **Gama Zero:** É o divisor de águas. Acima dele estamos seguros; abaixo dele o pânico pode começar.
     * **Put Wall (Parede de Baixo):** Funciona como um suporte muito forte onde o preço costuma bater e subir.
-    * **Call Wall (Parede de Cima):** Funciona como uma resistência forte onde o preço costuma bater e cair.
-    """)
-    # --- COLE ESTE BLOCO NO FINAL DO ARQUIVO ---
-        st.divider()
-    st.subheader("📊 Histograma de Gamma Exposure")
-
-    try:
+    * **Call Wall (Parede de Cima):** Funciona como uma resistência forte onde o preço costuma bater e 
         # Chamando os dados
         calls_data, puts_data = get_gamma_data('QQQ')
+        st.divider()
+st.subheader("📊 Histograma de Gamma Exposure")
+
+try:
+    # Chamando os dados
+    calls_data, puts_data = get_gamma_data('QQQ')
+    
+    # Cálculo de Força Total para a porcentagem
+    total_gex = calls_data['GEX'].sum() + puts_data['GEX'].abs().sum()
+    
+    fig_hist = go.Figure()
+
+    # Barras de Calls (Verde)
+    fig_hist.add_trace(go.Bar(
+        x=calls_data['strike'],
+        y=calls_data['GEX'],
+        name='Calls (Alta)',
+        marker_color='#00ffcc',
+        customdata=calls_data['GEX'] / total_gex * 100,
+        hovertemplate="<b>Strike: %{x}</b><br>Peso: %{customdata:.2f}%<extra></extra>"
+    ))
+
+    # Barras de Puts (Vermelho)
+    fig_hist.add_trace(go.Bar(
+        x=puts_data['strike'],
+        y=puts_data['GEX'],
+        name='Puts (Baixa)',
+        marker_color='#ff4b4b',
+        customdata=puts_data['GEX'].abs() / total_gex * 100,
+        hovertemplate="<b>Strike: %{x}</b><br>Peso: %{customdata:.2f}%<extra></extra>"
+    ))
+
+    # Ajuste do Layout e Zoom
+    fig_hist.update_layout(
+        template="plotly_dark", 
+        barmode='relative',
+        xaxis_title="Strike Price ($)",
+        yaxis_title="GEX Estimado",
+        height=500,
+        xaxis=dict(range=[current_price * 0.95, current_price * 1.05]),
+        hovermode="x unified"
+    )
+    
+    # Linha do Preço Atual
+    fig_hist.add_vline(x=current_price, line_width=3, line_dash="dash", line_color="yellow")
+
+    st.plotly_chart(fig_hist, use_container_width=True)
+
+except Exception as e:
+    st.info(f"Aguardando dados... {e}")
+
         
         # Cálculo de Força Total para a porcentagem
         total_gex = calls_data['GEX'].sum() + puts_data['GEX'].abs().sum()
