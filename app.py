@@ -70,6 +70,27 @@ fig.add_hline(y=levels['call'], line_color="red", line_width=2, annotation_text=
 
 fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False)
 st.plotly_chart(fig, use_container_width=True)
+# --- Medidor de Risco (Colar na Linha 73) ---
+st.divider()
+st.subheader("⚡ Medidor de Risco e Volatilidade")
+
+# Cálculo da distância até a Put Wall
+distancia_suporte = ((current_price - levels['put']) / levels['put']) * 100
+
+col_vix1, col_vix2 = st.columns(2)
+
+with col_vix1:
+    if current_price < levels['put']:
+        st.error(f"⚠️ ABAIXO DO SUPORTE\n\nPreço furou a Put Wall (${levels['put']}). Risco de queda acelerada!")
+    else:
+        st.success(f"🛡️ ACIMA DO SUPORTE\n\nPreço está {distancia_suporte:.2f}% acima da zona de proteção.")
+
+with col_vix2:
+    if gex_total < 0:
+        st.warning("🔥 RISCO: GAMA NEGATIVO\n\nCenário de EXPANSÃO. Movimentos podem ser explosivos e rápidos.")
+    else:
+        st.info("🟢 RISCO: GAMA POSITIVO\n\nCenário de SUPRESSÃO. Tendência de mercado mais estável e lenta.")
+
 with st.expander("📖 Como interpretar este Monitor"):
         st.markdown("""
         ### 🛡️ O que é Supressão vs Expansão?
