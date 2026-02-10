@@ -82,27 +82,36 @@ with st.expander("📖 Como interpretar este Rastreador?"):
     * **Call Wall (Parede de Cima):** Funciona como uma resistência forte onde o preço costuma bater e cair.
     """)
     # --- COLE ESTE BLOCO NO FINAL DO ARQUIVO ---
-st.divider()
-st.subheader("📊 Histograma de Gamma Exposure")
+    st.divider()
+    st.subheader("📊 Histograma de Gamma com Força Relativa")
 
-try:
-    # Chamando a função que você criou lá na linha 20
-    calls_data, puts_data = get_gamma_data("QQQ")
+    try:
+        # Chamando os dados
+        calls_data, puts_data = get_gamma_data('
 
+    # Cálculo de Força Total para a porcentagem
+    total_gex = calls_data['GEX'].sum() + puts_data['GEX'].abs().sum()
+    
     fig_hist = go.Figure()
-    # Barras de Calls (Verde)
+
+    # Barras de Calls (Verde) + Cálculo de Peso
     fig_hist.add_trace(go.Bar(
-        x=calls_data['strike'], 
-        y=calls_data['GEX'], 
-        name='Calls (Apostas de Alta)', 
-        marker_color='#00ffcc'
+        x=calls_data['strike'],
+        y=calls_data['GEX'],
+        name='Calls (Apostas de Alta)',
+        marker_color='#00ffcc',
+        customdata=calls_data['GEX'] / total_gex * 100,
+        hovertemplate="<b>Strike: %{x}</b><br>GEX: %{y:.2s}<br>Peso: %{customdata:.2f}% do Mercado<extra></extra>"
     ))
-    # Barras de Puts (Vermelho)
+
+    # Barras de Puts (Vermelho) + Cálculo de Peso
     fig_hist.add_trace(go.Bar(
-        x=puts_data['strike'], 
-        y=puts_data['GEX'], 
-        name='Puts (Apostas de Baixa)', 
-        marker_color='#ff4b4b'
+        x=puts_data['strike'],
+        y=puts_data['GEX'],
+        name='Puts (Apostas de Baixa)',
+        marker_color='#ff4b4b',
+        customdata=puts_data['GEX'].abs() / total_gex * 100,
+        hovertemplate="<b>Strike: %{x}</b><br>GEX: %{y:.2s}<br>Peso: %{customdata:.2f}% do Mercado<extra></extra>"
     ))
 
         # Ajuste do Layout e Zoom
