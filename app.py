@@ -70,7 +70,7 @@ fig.add_hline(y=levels['call'], line_color="red", line_width=2, annotation_text=
 
 fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False)
 st.plotly_chart(fig, use_container_width=True)
-    with st.expander("📖 Como interpretar este Monitor"):
+with st.expander("📖 Como interpretar este Monitor"):
         st.markdown("""
         ### 🛡️ O que é Supressão vs Expansão?
         * **SUPRESSÃO (Gama Positiva):** O mercado tende a ficar calmo e lateral.
