@@ -154,8 +154,12 @@ try:
         annotation_text=f"Preço Spot: ${current_price:.2f}",
         annotation_position="top left"
     )
+    if current_price < levels['zero'] and current_price > (levels['zero'] * 0.995):
+        st.info("🔄 **SCANNER:** Preço testando o Zero Gamma por baixo. Possível reversão ou forte resistência!")
+    elif current_price > levels['zero'] and current_price < (levels['zero'] * 1.005):
+        st.info("🔄 **SCANNER:** Preço testando o Zero Gamma por cima. Suporte de curto prazo identificado.")
 
-    st.plotly_chart(fig_hist, 
-use_container_width=True)
+
+    st.plotly_chart(fig_hist, use_container_width=True)
 except Exception as e:
     st.info(f"Aguardando dados... {e}")
