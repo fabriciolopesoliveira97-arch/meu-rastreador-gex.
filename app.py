@@ -9,13 +9,11 @@ from datetime import datetime
 # --- 1. CONFIGURAÇÃO DE TELA ---
 st.set_page_config(page_title="GEX & VANNA PRO", layout="wide")
 
-# CSS para forçar o visual das imagens (Cards, Cores e Fontes)
 st.markdown("""
     <style>
-    [data-testid="stMetricValue"] { font-size: 45px !important; font-weight: bold; }
-    .status-box { padding: 20px; border-radius: 10px; margin-bottom: 20px; }
-    .stTabs [data-baseweb="tab-list"] { gap: 24px; }
-    .stTabs [data-baseweb="tab"] { height: 50px; white-space: pre-wrap; font-size: 16px; }
+    [data-testid="stMetricValue"] { font-size: 42px !important; font-weight: bold; }
+    .status-box { padding: 15px; border-radius: 8px; margin-bottom: 15px; font-weight: bold; }
+    div[data-testid="stMetricValue"] { color: white; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -49,79 +47,85 @@ calls, puts, spot, hist = get_market_data(ticker)
 
 if not calls.empty:
     net_gex = (calls['GEX'].sum() + puts['GEX'].sum()) / 10**6
-    # Cálculo Zero Gamma
+    net_vex = (calls['VEX'].sum() + puts['VEX'].sum()) / 10**6
+    
     df_total = pd.merge(calls, puts, on='strike', suffixes=('_c', '_p'))
     df_total['net_gex_strike'] = df_total['GEX_c'] + df_total['GEX_p']
+    df_total['net_vex_strike'] = df_total['VEX_c'] + df_total['VEX_p']
     zero_gamma = df_total.iloc[(df_total['net_gex_strike']).abs().argsort()[:1]]['strike'].values[0]
     
     put_wall = puts.loc[puts['GEX'].abs().idxmax(), 'strike']
     call_wall = calls.loc[calls['GEX'].idxmax(), 'strike']
 
-    # --- 3. CABEÇALHO E ALERTAS (IDÊNTICO ÀS IMAGENS) ---
-    st.write(f"### {datetime.now().strftime('%b %d, %Y')}")
+    # --- 3. CABEÇALHO E ALERTAS ---
+    cor_gex = "#00ffcc" if net_gex > 0 else "#ff4b4b"
+    cor_vex = "#00ffcc" if net_vex > 0 else "#ff4b4b"
+    label_status = "SUPRESSÃO" if net_gex > 0 else "EXPANSÃO"
     
-    cor_status = "#00ffcc" if net_gex > 0 else "#ff4b4b"
-    txt_status = "SUPRESSÃO" if net_gex > 0 else "EXPANSÃO"
-    st.markdown(f"<h1 style='color: white; font-size: 60px;'>{txt_status}</h1>", unsafe_allow_html=True)
+    st.write(f"### {datetime.now().strftime('%b %d, %Y')}")
+    st.markdown(f"<h1 style='color: white; font-size: 55px;'>{label_status}</h1>", unsafe_allow_html=True)
 
     if spot < put_wall:
         st.markdown(f"<div class='status-box' style='background-color: #411b1b; color: #ff4b4b; border: 1px solid #ff4b4b;'>⚠️ ABAIXO DO SUPORTE: Preço furou a Put Wall (${put_wall})</div>", unsafe_allow_html=True)
     if net_gex < 0:
         st.markdown(f"<div class='status-box' style='background-color: #3d3d1b; color: #ffff00; border: 1px solid #ffff00;'>🔥 RISCO: GAMA NEGATIVO (Movimentos Explosivos)</div>", unsafe_allow_html=True)
 
-    # Métricas Verticais
-    st.metric("Net GEX", f"{net_gex:.2f}M", delta="Positivo" if net_gex > 0 else "Negativo")
-    st.metric("Zero Gamma", f"${zero_gamma}")
-    st.metric("Put Wall", f"${put_wall}")
-    st.metric("Call Wall", f"${call_wall}")
+    # Injeção de cores dinâmicas nas métricas
+    st.markdown(f"""
+        <style>
+        div[data-testid="column"]:nth-child(1) [data-testid="stMetricValue"] {{ color: {cor_gex} !important; }}
+        div[data-testid="column"]:nth-child(2) [data-testid="stMetricValue"] {{ color: {cor_vex} !important; }}
+        </style>
+    """, unsafe_allow_html=True)
 
-    st.markdown(f"## Cenário Atual: <span style='color: {cor_status}'>{txt_status}</span>", unsafe_allow_html=True)
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Net GEX", f"{net_gex:.2f}M")
+    c2.metric("Net Vanna", f"{net_vex:.2f}M")
+    c3.metric("Zero Gamma", f"${zero_gamma}")
+    c4.metric("Put Wall", f"${put_wall}")
+    c5.metric("Spot Price", f"${spot:.2f}")
 
-    # --- 4. SISTEMA DE ABAS ---
-    tab_price, tab_gex, tab_vanna = st.tabs(["📈 Gráfico de Preço", "📊 Gamma Profile", "🌊 Vanna Exposure"])
+    # --- 4. ABAS ---
+    tab_price, tab_gex, tab_vanna = st.tabs(["📈 Preço", "📊 Gamma Profile", "🌊 Vanna Exposure"])
 
     with tab_price:
-        fig_p = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], name="Price")])
+        fig_p = go.Figure(data=[go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], name="Preço")])
         fig_p.add_hline(y=call_wall, line_color="green", annotation_text="Call Wall")
         fig_p.add_hline(y=put_wall, line_color="red", annotation_text="Put Wall")
         fig_p.add_hline(y=zero_gamma, line_dash="dash", line_color="yellow", annotation_text="Zero Gamma")
-        fig_p.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False)
+        fig_p.update_layout(template="plotly_dark", height=500, xaxis_rangeslider_visible=False)
         st.plotly_chart(fig_p, use_container_width=True)
 
     with tab_gex:
-        st.subheader("📊 Histograma de Gamma Exposure")
-        total_abs_gex = calls['GEX'].abs().sum() + puts['GEX'].abs().sum()
-        
+        st.subheader("Força por Strike (%)")
+        total_gex_abs = calls['GEX'].abs().sum() + puts['GEX'].abs().sum()
         fig_g = go.Figure()
-        fig_g.add_trace(go.Bar(
-            x=calls['strike'], y=calls['GEX'], name='Calls (Alta)', marker_color='#00ffcc',
-            customdata=(calls['GEX'].abs() / total_abs_gex * 100).round(2),
-            hovertemplate="<b>Strike: $%{x}</b><br>GEX: %{y:.2f}M<br><b>Peso: %{customdata}%</b><extra></extra>"
-        ))
-        fig_g.add_trace(go.Bar(
-            x=puts['strike'], y=puts['GEX'], name='Puts (Baixa)', marker_color='#ff4b4b',
-            customdata=(puts['GEX'].abs() / total_abs_gex * 100).round(2),
-            hovertemplate="<b>Strike: $%{x}</b><br>GEX: %{y:.2f}M<br><b>Peso: %{customdata}%</b><extra></extra>"
-        ))
-        fig_g.add_vline(x=spot, line_dash="dash", line_color="yellow", annotation_text=f"Spot: ${spot:.2f}")
+        fig_g.add_trace(go.Bar(x=calls['strike'], y=calls['GEX'], name='Calls', marker_color='#00ffcc',
+                               customdata=(calls['GEX'].abs()/total_gex_abs*100).round(2),
+                               hovertemplate="Strike: %{x}<br>GEX: %{y:.2f}M<br>Peso: %{customdata}%<extra></extra>"))
+        fig_g.add_trace(go.Bar(x=puts['strike'], y=puts['GEX'], name='Puts', marker_color='#ff4b4b',
+                               customdata=(puts['GEX'].abs()/total_gex_abs*100).round(2),
+                               hovertemplate="Strike: %{x}<br>GEX: %{y:.2f}M<br>Peso: %{customdata}%<extra></extra>"))
         fig_g.update_layout(template="plotly_dark", barmode='relative', height=500, hovermode="x unified")
         st.plotly_chart(fig_g, use_container_width=True)
 
     with tab_vanna:
-        st.subheader("🌊 Histograma de Vanna (VEX)")
+        st.subheader("Vanna Exposure (Modelo Linha)")
+        # RESTAURADO: Gráfico de linha Scatter para o Vanna
         fig_v = go.Figure()
-        fig_v.add_trace(go.Bar(x=calls['strike'], y=calls['VEX'], name='Vanna Calls', marker_color='#00ffcc'))
-        fig_v.add_trace(go.Bar(x=puts['strike'], y=puts['VEX'], name='Vanna Puts', marker_color='#ff4b4b'))
-        fig_v.update_layout(template="plotly_dark", barmode='relative', height=500)
+        fig_v.add_trace(go.Scatter(x=df_total['strike'], y=df_total['net_vex_strike'], 
+                                   mode='lines+markers', name='Net Vanna',
+                                   line=dict(color='orange', width=3),
+                                   fill='tozeroy', fillcolor='rgba(255, 165, 0, 0.1)'))
+        fig_v.add_hline(y=0, line_color="white", line_dash="dash")
+        fig_v.add_vline(x=spot, line_color="yellow", line_dash="dot", annotation_text="SPOT")
+        fig_v.update_layout(template="plotly_dark", height=500, yaxis_title="Vanna Exposure")
         st.plotly_chart(fig_v, use_container_width=True)
 
-    # --- 5. DICIONÁRIO ESTRATÉGICO ---
+    # --- 5. DICIONÁRIO ---
     st.divider()
-    st.header("🧠 Dicionário Estratégico de Mercado")
-    st.markdown(f"🟢 **{txt_status} (Gama {'Positivo' if net_gex > 0 else 'Negativo'})**")
-    st.write(f"Cenário: O preço atual está {'acima' if spot > zero_gamma else 'abaixo'} do Zero Gamma (${zero_gamma}).")
-    st.markdown("* **Mecânica:** Market Makers compram nas quedas e vendem nas altas para manter o hedge estável.")
-    st.markdown(f"* **Put Wall (${put_wall}):** É o suporte institucional mais forte do dia.")
+    st.markdown(f"### 🧠 Cenário Atual: <span style='color: {cor_gex}'>{label_status}</span>", unsafe_allow_html=True)
+    st.write(f"O preço está operando em relação ao **Zero Gamma (${zero_gamma})**. Em supressão, os Market Makers compram as quedas.")
 
 else:
-    st.error("Erro ao carregar os dados. Verifique a conexão.")
+    st.error("Erro ao carregar dados.")
