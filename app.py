@@ -12,6 +12,7 @@ st.set_page_config(page_title="GEX PRO - High Precision", layout="wide")
 
 # --- 2. FUNÇÕES MATEMÁTICAS (BLACK-SCHOLES + VANNA) ---
 def calculate_greeks(S, K, T, r, sigma):
+    """Calcula Gamma e Vanna"""
     if T <= 0 or sigma <= 0 or S <= 0:
         return 0, 0
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
@@ -21,12 +22,12 @@ def calculate_greeks(S, K, T, r, sigma):
     vanna = (norm.pdf(d1) * (d2 / sigma)) * -1 
     return gamma, vanna
 
-# --- 3. FUNÇÕES DE DADOS (ATUALIZAÇÃO AUTOMÁTICA) ---
-@st.cache_data(ttl=60)
+# --- 3. FUNÇÕES DE DADOS ---
+@st.cache_data(ttl=300)
 def get_gamma_data_v2(ticker_symbol):
     try:
         tk = yf.Ticker(ticker_symbol)
-        df_hist = tk.history(period="1d", interval="1m")
+        df_hist = tk.history(period="1d", interval="5m")
         if df_hist.empty:
             df_hist = tk.history(period="1d")
         
@@ -41,11 +42,12 @@ def get_gamma_data_v2(ticker_symbol):
         calls = options.calls[['strike', 'openInterest', 'impliedVolatility', 'lastPrice']].copy()
         puts = options.puts[['strike', 'openInterest', 'impliedVolatility', 'lastPrice']].copy()
 
+        # Cálculo de Gamma e Vanna integrados
         for df, is_put in [(calls, False), (puts, True)]:
-            greeks = df.apply(lambda x: calculate_greeks(S, x['strike'], T, r, x['impliedVolatility']), axis=1)
-            df['Gamma_Puro'] = greeks.apply(lambda x: x[0])
-            df['Vanna_Pura'] = greeks.apply(lambda x: x[1])
-            # GEX e VEX Financeiro
+            res = df.apply(lambda x: calculate_greeks(S, x['strike'], T, r, x['impliedVolatility']), axis=1)
+            df['Gamma_Puro'] = res.apply(lambda x: x[0])
+            df['Vanna_Pura'] = res.apply(lambda x: x[1])
+            
             mult = 1 if not is_put else -1
             df['GEX'] = df['Gamma_Puro'] * df['openInterest'] * 100 * S * mult
             df['VEX'] = df['Vanna_Pura'] * df['openInterest'] * 100 * mult
@@ -72,58 +74,52 @@ if not calls_data.empty:
     levels = get_gamma_levels(calls_data, puts_data)
     net_gex_total = (calls_data['GEX'].sum() + puts_data['GEX'].sum()) / 10**6
     
-    # --- CABEÇALHO E MÉTRICAS ---
     st.title(f"🛡️ {ticker_symbol} Institutional Tracker")
     c1, c2, c3, c4, c5 = st.columns(5)
+    
     gex_color = "normal" if net_gex_total > 0 else "inverse"
-    c1.metric("Net GEX Total", f"{net_gex_total:.2f}M", delta=f"{'POSITIVO' if net_gex_total > 0 else 'NEGATIVO'}", delta_color=gex_color)
+    c1.metric("Net GEX Total", f"{net_gex_total:.2f}M", delta=f"{'Positivo' if net_gex_total > 0 else 'Negativo'}", delta_color=gex_color)
     c2.metric("Zero Gamma", f"${levels['zero']}")
     c3.metric("Put Wall", f"${levels['put']}")
     c4.metric("Call Wall", f"${levels['call']}")
     c5.metric("Preço Spot", f"${current_price:.2f}")
 
-    # --- SISTEMA DE ALERTAS ---
-    st.divider()
-    dist_put = abs(current_price - levels['put']) / current_price
-    dist_call = abs(current_price - levels['call']) / current_price
-    if dist_put < 0.005:
-        st.error(f"⚠️ ALERTA: Preço próximo ao PUT WALL (${levels['put']}).")
-    elif dist_call < 0.005:
-        st.warning(f"⚠️ ALERTA: Preço próximo ao CALL WALL (${levels['call']}).")
-    else:
-        st.info("💡 Mercado navegando em zona intermediária.")
-
-    # --- HISTOGRAMA GEX (COMO ESTAVA) ---
+    # --- HISTOGRAMA GEX (ESTILO IMAGEM 2) ---
     st.subheader("📊 Histograma de Gamma Exposure (Força por Strike)")
+    
     total_abs = calls_data['GEX'].abs().sum() + puts_data['GEX'].abs().sum()
     calls_data['forca'] = (calls_data['GEX'].abs() / total_abs) * 100
     puts_data['forca'] = (puts_data['GEX'].abs() / total_abs) * 100
 
     fig_hist = go.Figure()
-    fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls', marker_color='#00ffcc', customdata=calls_data['forca'], hovertemplate="<b>Strike: %{x}</b><br>GEX: %{y:,.0f}<br>Força: %{customdata:.2f}%<extra></extra>"))
-    fig_hist.add_trace(go.Bar(x=puts_data['strike'], y=puts_data['GEX'], name='Puts', marker_color='#ff4b4b', customdata=puts_data['forca'], hovertemplate="<b>Strike: %{x}</b><br>GEX: %{y:,.0f}<br>Força: %{customdata:.2f}%<extra></extra>"))
-    fig_hist.add_vline(x=current_price, line_dash="dash", line_color="white", line_width=2)
-    fig_hist.add_annotation(x=current_price, y=1.1, yref="paper", text=f"SPOT: ${current_price:.2f}", showarrow=False, font=dict(color="black"), bgcolor="white")
-    fig_hist.update_layout(template="plotly_dark", barmode='relative', xaxis=dict(range=[current_price * 0.96, current_price * 1.04]), height=500)
+    fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls (Bullish)', marker_color='#00ffcc',
+                              customdata=calls_data['forca'], hovertemplate="GEX: %{y:,.0f}<br>Força: %{customdata:.2f}%<extra></extra>"))
+    fig_hist.add_trace(go.Bar(x=puts_data['strike'], y=puts_data['GEX'], name='Puts (Bearish)', marker_color='#ff4b4b',
+                              customdata=puts_data['forca'], hovertemplate="GEX: %{y:,.0f}<br>Força: %{customdata:.2f}%<extra></extra>"))
+    
+    # Linha tracejada do Spot e Etiqueta
+    fig_hist.add_vline(x=current_price, line_dash="dash", line_color="white", line_width=2, layer="above")
+    fig_hist.add_annotation(x=current_price, y=1.1, yref="paper", text=f"SPOT: ${current_price:.2f}", showarrow=False, 
+                            font=dict(color="black", size=12, family="Arial Black"), bgcolor="white", borderpad=4)
+
+    fig_hist.update_layout(template="plotly_dark", barmode='relative', hovermode="x unified", 
+                          xaxis=dict(title="Strike ($)", range=[current_price * 0.96, current_price * 1.04]), height=600)
     st.plotly_chart(fig_hist, use_container_width=True)
 
-    # --- ADIÇÃO: NOVO GRÁFICO DE VANNA (PEDIDO) ---
-    st.subheader("🔮 Vanna Exposure (VEX) - Sensibilidade à Volatilidade")
+    # --- GRÁFICO VANNA (DINÂMICO) ---
+    st.subheader("🔮 Vanna Exposure (VEX) - Colorido por Sinal")
     vanna_merged = pd.concat([calls_data[['strike', 'VEX']], puts_data[['strike', 'VEX']]]).groupby('strike').sum().reset_index()
-    # Cores dinâmicas: Verde para positivo, Vermelho para negativo
     vanna_merged['cor'] = np.where(vanna_merged['VEX'] >= 0, '#00ffcc', '#ff4b4b')
     
     fig_vanna = go.Figure()
-    fig_vanna.add_trace(go.Bar(x=vanna_merged['strike'], y=vanna_merged['VEX'], marker_color=vanna_merged['cor'], hovertemplate="<b>Strike: %{x}</b><br>Vanna: %{y:,.0f}<extra></extra>"))
+    fig_vanna.add_trace(go.Bar(x=vanna_merged['strike'], y=vanna_merged['VEX'], marker_color=vanna_merged['cor'], hovertemplate="Vanna: %{y:,.0f}<extra></extra>"))
     fig_vanna.add_vline(x=current_price, line_dash="dash", line_color="white", line_width=2)
     fig_vanna.update_layout(template="plotly_dark", xaxis=dict(range=[current_price * 0.96, current_price * 1.04]), height=400, showlegend=False)
     st.plotly_chart(fig_vanna, use_container_width=True)
 
-    # --- GRÁFICO DE PREÇO (COMO ESTAVA) ---
+    # --- GRÁFICO CANDLESTICK ---
     fig_candle = go.Figure(data=[go.Candlestick(x=df_price.index, open=df_price['Open'], high=df_price['High'], low=df_price['Low'], close=df_price['Close'], name="Preço")])
     fig_candle.add_hline(y=levels['zero'], line_dash="dash", line_color="yellow")
-    fig_candle.add_hline(y=levels['put'], line_color="red", line_width=2)
-    fig_candle.add_hline(y=levels['call'], line_color="green", line_width=2)
     fig_candle.update_layout(template="plotly_dark", height=400, xaxis_rangeslider_visible=False)
     st.plotly_chart(fig_candle, use_container_width=True)
 
