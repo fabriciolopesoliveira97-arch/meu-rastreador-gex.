@@ -190,3 +190,22 @@ fig_hist.update_layout(
 )
 
 st.plotly_chart(fig_hist, use_container_width=True)
+# --- SEÇÃO EDUCATIVA: O QUE SÃO ESSES NÍVEIS ---
+st.divider()
+with st.expander("📚 Entenda os Indicadores Institucionais"):
+    st.markdown("""
+    ### 🧱 Put Wall (Parede de Puts)
+    É o nível de preço com a maior concentração de **Gamma de Puts**. Funciona como o **suporte mais forte** do mercado. Os Market Makers precisam comprar o ativo conforme o preço cai em direção a este nível, criando um efeito de "piso".
+
+    ### 🏰 Call Wall (Parede de Calls)
+    É o nível com a maior concentração de **Gamma de Calls**. Representa a **resistência máxima**. Acima deste ponto, o mercado entra em uma zona onde a volatilidade tende a diminuir, pois os Market Makers seguram a alta vendendo o ativo para proteger suas posições.
+
+    ### ⚖️ Zero Gamma (Ponto de Inflexão)
+    É o "divisor de águas" do mercado:
+    * **Acima do Zero Gamma:** O mercado está em regime de **Gama Positivo**. A volatilidade é baixa e as quedas são rapidamente compradas.
+    * **Abaixo do Zero Gamma:** O mercado entra em **Gama Negativo**. A volatilidade explode e os movimentos de queda tendem a ser acelerados por vendas forçadas de robôs institucionais.
+
+    ### 📊 Peso % (No Histograma)
+    Representa a força relativa de cada Strike. Quanto maior o peso em um preço específico, maior é a barreira financeira que o Nasdaq enfrentará naquele ponto.
+    """)
+
