@@ -44,6 +44,7 @@ def get_gamma_data_v2(ticker_symbol):
         calls = options.calls[['strike', 'openInterest', 'impliedVolatility', 'lastPrice']].copy()
         puts = options.puts[['strike', 'openInterest', 'impliedVolatility', 'lastPrice']].copy()
 
+        # Cálculo da Gamma Pura e GEX Financeiro (Modelo Black-Scholes)
         calls['Gamma_Puro'] = calls.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']), axis=1)
         puts['Gamma_Puro'] = puts.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']), axis=1)
 
@@ -74,17 +75,18 @@ if not calls_data.empty:
     status = "SUPRESSÃO" if current_price > levels['zero'] else "EXPANSÃO"
     status_color = "#00ffcc" if status == "SUPRESSÃO" else "#ff4b4b"
 
+    # --- TÍTULO E MÉTRICAS ---
     st.title(f"🛡️ {ticker_symbol} Institutional Tracker")
 
-    # --- ALERTAS DINÂMICOS (IGUAL À IMAGEM) ---
+    # --- ADIÇÃO: ALERTAS (CONFORME SOLICITADO) ---
     st.divider()
     if current_price < levels['put']:
         st.error(f"⚠️ ABAIXO DO SUPORTE: Preço furou a Put Wall (${levels['put']})")
     
     if status == "EXPANSÃO":
         st.warning(f"🔥 RISCO: GAMA NEGATIVO (Movimentos Explosivos)")
+    st.divider()
 
-    # --- MÉTRICAS COM CORES DINÂMICAS ---
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Status Mercado", status)
     c2.metric("Net GEX", f"{net_gex_total:.2f}M", 
@@ -92,37 +94,66 @@ if not calls_data.empty:
               delta_color="normal" if net_gex_total > 0 else "inverse")
     c3.metric("Zero Gamma", f"${levels['zero']}")
     c4.metric("Put Wall", f"${levels['put']}")
-    c5.metric("Preço Spot", f"${current_price:.2f}")
+    c5.metric("Call Wall", f"${levels['call']}")
 
-    # --- HISTOGRAMA GEX (COM LABEL SPOT) ---
+    st.markdown(f"## Cenário Atual: <span style='color:{status_color}'>{status}</span>", unsafe_allow_html=True)
+
+    # --- GRÁFICO CANDLESTICK ---
+    fig_candle = go.Figure(data=[go.Candlestick(x=df_price.index, open=df_price['Open'], high=df_price['High'], low=df_price['Low'], close=df_price['Close'], name="Preço")])
+    fig_candle.add_hline(y=levels['zero'], line_dash="dash", line_color="yellow", annotation_text="Zero Gamma")
+    fig_candle.add_hline(y=levels['put'], line_color="green", line_width=2, annotation_text="Put Wall")
+    fig_candle.add_hline(y=levels['call'], line_color="red", line_width=2, annotation_text="Call Wall")
+    fig_candle.update_layout(template="plotly_dark", height=400, xaxis_rangeslider_visible=False)
+    st.plotly_chart(fig_candle, use_container_width=True)
+
+    # --- HISTOGRAMA GEX ---
     st.subheader("📊 Histograma de Gamma Exposure")
+    total_abs = calls_data['GEX'].sum() + puts_data['GEX'].abs().sum()
+    calls_data['peso'] = (calls_data['GEX'] / total_abs) * 100
+    puts_data['peso'] = (puts_data['GEX'].abs() / total_abs) * 100
+
     fig_hist = go.Figure()
-    fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls', marker_color='#00ffcc'))
-    fig_hist.add_trace(go.Bar(x=puts_data['strike'], y=puts_data['GEX'], name='Puts', marker_color='#ff4b4b'))
+    fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls (Alta)', marker_color='#00ffcc', 
+                              customdata=calls_data['peso'], hovertemplate="Strike: %{x}<br>GEX: %{y:.2f}<br>Peso: %{customdata:.2f}%<extra></extra>"))
+    fig_hist.add_trace(go.Bar(x=puts_data['strike'], y=puts_data['GEX'], name='Puts (Baixa)', marker_color='#ff4b4b', 
+                              customdata=puts_data['peso'], hovertemplate="Strike: %{x}<br>GEX: %{y:.2f}<br>Peso: %{customdata:.2f}%<extra></extra>"))
     
-    # Etiqueta Spot exata
-    fig_hist.add_vline(x=current_price, line_dash="dash", line_color="white", line_width=2)
-    fig_hist.add_annotation(x=current_price, y=1.05, yref="paper", text=f"SPOT: ${current_price:.2f}", 
-                            showarrow=False, font=dict(color="black"), bgcolor="white", borderpad=4)
+    # Linha e Etiqueta do Spot
+    fig_hist.add_vline(x=current_price, line_dash="dash", line_color="yellow", line_width=2, layer="above")
+    max_y = max(calls_data['GEX'].max(), puts_data['GEX'].abs().max())
+    fig_hist.add_annotation(x=current_price, y=max_y * 1.05, text=f"Preço Spot: ${current_price:.2f}", 
+                            showarrow=False, font=dict(color="white", size=12), bgcolor="rgba(0,0,0,0.5)")
+
     fig_hist.update_layout(template="plotly_dark", barmode='relative', hovermode="x unified", 
-                          xaxis=dict(range=[current_price * 0.97, current_price * 1.03]))
+                          xaxis=dict(title="Strike Price ($)", range=[current_price * 0.97, current_price * 1.03]), height=500,
+                          hoverlabel=dict(bgcolor="black", font_size=13))
     st.plotly_chart(fig_hist, use_container_width=True)
 
-    # --- EXPLICAÇÃO TÉCNICA (DICIONÁRIO) ---
+    # --- ADIÇÃO: EXPLICAÇÃO DE CADA COISA (DICIONÁRIO) ---
     st.divider()
-    st.header("🧠 O que significa cada indicador?")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("📌 Níveis de Preço")
-        st.write(f"**Zero Gamma (${levels['zero']}):** O 'divisor de águas'. Acima dele, o mercado é calmo; abaixo, a volatilidade explode.")
-        st.write(f"**Put Wall (${levels['put']}):** O suporte mais forte. É onde os grandes players param de vender e começam a segurar o preço.")
-        st.write(f"**Call Wall (${levels['call']}):** A resistência principal. Marca o 'teto' onde o rali costuma perder força.")
-    
-    with col2:
-        st.subheader("📈 Dinâmica de Mercado")
-        st.write(f"**Net GEX (${net_gex_total:.2f}M):** Se positivo, os Market Makers agem como amortecedores. Se negativo, eles aceleram as quedas.")
-        st.write(f"**Status {status}:** Indica se o mercado está em fase de compressão (calmo) ou expansão de risco (perigoso).")
+    st.header("🧠 Explicação dos Indicadores")
+    col_edu1, col_edu2 = st.columns(2)
 
+    with col_edu1:
+        st.markdown(f"""
+        ### 🟢 SUPRESSÃO (Gama Positivo)
+        **Cenário:** O preço atual está **acima** do Zero Gamma (${levels['zero']}).
+        * **O que significa:** Os Market Makers compram nas quedas e vendem nas altas para manter o hedge estável.
+        * **Efeito:** A volatilidade é "comprimida", resultando em movimentos mais lentos e previsíveis.
+        
+        ### 🧱 Put Wall (${levels['put']})
+        * É o suporte institucional mais forte. Indica onde os Market Makers têm maior obrigação de compra para defender o strike.
+        """)
+
+    with col_edu2:
+        st.markdown(f"""
+        ### 🔴 EXPANSÃO (Gama Negativo)
+        **Cenário:** O preço atual está **abaixo** do Zero Gamma (${levels['zero']}).
+        * **O que significa:** Os Market Makers precisam vender conforme o ativo cai para ajustar o hedge, criando um efeito cascata.
+        * **Efeito:** A volatilidade "explode", gerando movimentos rápidos e velas longas.
+
+        ### 🏰 Call Wall (${levels['call']})
+        * É a resistência institucional principal. Indica onde a pressão de venda institucional é máxima para frear a subida.
+        """)
 else:
     st.error("Erro ao carregar dados.")
