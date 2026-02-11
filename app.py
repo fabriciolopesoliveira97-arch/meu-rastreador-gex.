@@ -52,8 +52,9 @@ def salvar_historico(p_price, p_gex, p_levels):
 def get_gamma_levels(calls, puts):
     if calls.empty or puts.empty:
         return {"zero": 602.24, "put": 600.17, "call": 610.00}
-    
-    df_total = pd.merge(calls, puts, on='strike', suffixes='_c', '_p')
+
+    df_total = pd.merge(calls, puts, on='strike', suffixes=('_c', '_p'))
+
     df_total['net_gex'] = df_total['GEX_c'] + df_total['GEX_p']
     
     zero_gamma = df_total.iloc[(df_total['net_gex']).abs().argsort()[:1]]['strike'].values[0]
