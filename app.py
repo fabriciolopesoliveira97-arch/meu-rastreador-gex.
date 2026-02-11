@@ -51,7 +51,7 @@ if not df_price.empty:
     status = "SUPRESSÃO" if current_price > levels['zero'] else "EXPANSÃO"
     status_color = "#00ffcc" if status == "SUPRESSÃO" else "#ff4b4b"
 
-    # --- INTERFACE VISUAL ---
+    # --- INTERFACE VISUAL: MÉTRICAS ---
     st.title(f"🛡️ {ticker_symbol} Institutional Tracker")
 
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -70,6 +70,23 @@ if not df_price.empty:
     fig_candle.add_hline(y=levels['call'], line_color="red", line_width=2, annotation_text="Call Wall")
     fig_candle.update_layout(template="plotly_dark", height=450, xaxis_rangeslider_visible=False)
     st.plotly_chart(fig_candle, use_container_width=True)
+
+    # --- NOVOS ALERTAS DE RISCO ---
+    st.divider()
+    col_alerta1, col_alerta2 = st.columns(2)
+    distancia_suporte = ((current_price - levels['put']) / levels['put']) * 100
+
+    with col_alerta1:
+        if current_price < levels['put']:
+            st.error(f"⚠️ ABAIXO DO SUPORTE: Preço furou a Put Wall (${levels['put']})")
+        else:
+            st.success(f"🛡️ ACIMA DO SUPORTE: Preço {distancia_suporte:.2f}% acima da Put Wall.")
+
+    with col_alerta2:
+        if status == "EXPANSÃO":
+            st.warning("🔥 RISCO: GAMA NEGATIVO (Movimentos Explosivos)")
+        else:
+            st.info("🟢 REGIME ESTÁVEL: GAMA POSITIVO (Volatilidade Baixa)")
 
     # --- HISTOGRAMA GEX ---
     st.subheader("📊 Histograma de Gamma Exposure")
@@ -94,41 +111,35 @@ if not df_price.empty:
                           hoverlabel=dict(bgcolor="black", font_size=13))
     st.plotly_chart(fig_hist, use_container_width=True)
 
-    # --- SEÇÃO EDUCATIVA ESTRATÉGICA ---
+    # --- DICIONÁRIO ESTRATÉGICO ---
     st.divider()
-    st.header("🧠 Guia Estratégico: Como ler os Cenários")
+    st.header("🧠 Dicionário Estratégico de Mercado")
     
     col_edu1, col_edu2 = st.columns(2)
 
     with col_edu1:
         st.markdown(f"""
         ### 🟢 SUPRESSÃO (Gama Positivo)
-        **Quando ocorre:** O preço está **acima** do Zero Gamma (${levels['zero']}).
-        * **Comportamento:** O mercado age como se estivesse "dentro de uma piscina". Os movimentos são lentos e amortecidos.
-        * **Ação Institucional:** Market Makers vendem nas altas e compram nas baixas para manter o preço estável.
-        * **Sentimento:** Quedas são geralmente curtas e vistas como oportunidade de compra (*Buy the Dip*).
+        **Cenário:** O preço atual está **acima** do Zero Gamma (${levels['zero']}).
+        * **Mecânica:** Os Market Makers compram nas quedas e vendem nas altas para manter o hedge estável.
+        * **Efeito:** A volatilidade é "comprimida". O mercado tende a subir de escada e cair de elevador curto.
+        * **Estratégia:** Quedas são geralmente oportunidades de compra rápidas.
         
         ### 🧱 Put Wall (${levels['put']})
-        * É o suporte máximo. Se o preço chegar aqui, a pressão de compra institucional é enorme.
+        * É o suporte institucional mais forte do dia. Representa onde os Market Makers têm a maior obrigação de compra para defender o strike.
         """)
 
     with col_edu2:
         st.markdown(f"""
         ### 🔴 EXPANSÃO (Gama Negativo)
-        **Quando ocorre:** O preço está **abaixo** do Zero Gamma (${levels['zero']}).
-        * **Comportamento:** O mercado entra em "modo pânico". A volatilidade explode e o preço pode cair (ou subir) muito rápido.
-        * **Ação Institucional:** Market Makers são forçados a vender conforme o preço cai, o que acelera a queda.
-        * **Sentimento:** Medo e movimentos irracionais. Evite posições pesadas sem proteção.
+        **Cenário:** O preço atual está **abaixo** do Zero Gamma (${levels['zero']}).
+        * **Mecânica:** Os Market Makers precisam vender conforme o ativo cai para ajustar o hedge, criando um efeito cascata.
+        * **Efeito:** A volatilidade "explode". Movimentos rápidos e direcionais (gaps e velas longas).
+        * **Estratégia:** Cuidado redobrado; o risco de "flash crashes" ou ralis violentos é alto.
 
         ### 🏰 Call Wall (${levels['call']})
-        * É a resistência máxima. O preço tem muita dificuldade de passar desse nível, pois há muita venda institucional protegendo o topo.
-        """)
-
-    with st.expander("⚖️ O que é o Zero Gamma?"):
-        st.info(f"""
-        O **Zero Gamma** (${levels['zero']}) é o divisor de águas. Imagine que é a linha que separa o mar calmo de uma tempestade. 
-        Sempre que o preço cruza essa linha para baixo, o risco de uma queda forte aumenta drasticamente porque o mercado perde seu "amortecedor" natural.
+        * É a resistência institucional principal. Onde a pressão de venda institucional é máxima para frear a euforia do mercado.
         """)
 
 else:
-    st.error("Dados indisponíveis.")
+    st.error("Erro ao carregar dados do mercado.")
