@@ -104,18 +104,60 @@ if not calls_data.empty:
 
     st.markdown(f"## Cenário Atual: <span style='color:{status_color}'>{status}</span>", unsafe_allow_html=True)
 
-    # --- HISTOGRAMA GEX (SEU ORIGINAL) ---
+    # --- HISTOGRAMA GEX (ESTILO FINAL COM ETIQUETA SPOT) ---
     st.subheader("📊 Histograma de Gamma Exposure (Força por Strike)")
+    
     total_abs = calls_data['GEX'].sum() + puts_data['GEX'].abs().sum()
     calls_data['peso'] = (calls_data['GEX'] / total_abs) * 100
     puts_data['peso'] = (puts_data['GEX'].abs() / total_abs) * 100
 
     fig_hist = go.Figure()
-    fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls (Alta)', marker_color='#00ffcc', customdata=calls_data['peso'], hovertemplate="Strike: %{x}<br>GEX: %{y:.2f}<br>Peso: %{customdata:.2f}%<extra></extra>"))
-    fig_hist.add_trace(go.Bar(x=puts_data['strike'], y=puts_data['GEX'], name='Puts (Baixa)', marker_color='#ff4b4b', customdata=puts_data['peso'], hovertemplate="Strike: %{x}<br>GEX: %{y:.2f}<br>Peso: %{customdata:.2f}%<extra></extra>"))
-    fig_hist.add_vline(x=current_price, line_dash="dash", line_color="white", line_width=2)
-    fig_hist.update_layout(template="plotly_dark", barmode='relative', hovermode="x unified", xaxis=dict(range=[current_price * 0.97, current_price * 1.03]), height=500)
+    fig_hist.add_trace(go.Bar(
+        x=calls_data['strike'], 
+        y=calls_data['GEX'], 
+        name='Calls (Alta)', 
+        marker_color='#00ffcc', 
+        customdata=calls_data['peso'], 
+        hovertemplate="Strike: %{x}<br>GEX: %{y:.2f}<br>Peso: %{customdata:.2f}%<extra></extra>"
+    ))
+    fig_hist.add_trace(go.Bar(
+        x=puts_data['strike'], 
+        y=puts_data['GEX'], 
+        name='Puts (Baixa)', 
+        marker_color='#ff4b4b', 
+        customdata=puts_data['peso'], 
+        hovertemplate="Strike: %{x}<br>GEX: %{y:.2f}<br>Peso: %{customdata:.2f}%<extra></extra>"
+    ))
+    
+    # Linha tracejada vertical
+    fig_hist.add_vline(x=current_price, line_dash="dash", line_color="white", line_width=2, layer="above")
+
+    # ETIQUETA DO VALOR SPOT (IGUAL À IMAGEM)
+    fig_hist.add_annotation(
+        x=current_price, 
+        y=1.05, 
+        yref="paper",
+        text=f"SPOT: ${current_price:.2f}",
+        showarrow=False,
+        font=dict(color="black", size=12, family="Arial Black"),
+        bgcolor="white",
+        bordercolor="white",
+        borderwidth=2,
+        borderpad=4,
+        opacity=0.9
+    )
+
+    fig_hist.update_layout(
+        template="plotly_dark", 
+        barmode='relative', 
+        hovermode="x unified", 
+        xaxis=dict(title="Strike Price ($)", range=[current_price * 0.97, current_price * 1.03]),
+        height=600,
+        hoverlabel=dict(bgcolor="black", font_size=13)
+    )
+    
     st.plotly_chart(fig_hist, use_container_width=True)
+
 
     # --- ADIÇÃO: GRÁFICO VANNA DINÂMICO ---
     st.subheader("🔮 Vanna Exposure (VEX) - Colorido")
