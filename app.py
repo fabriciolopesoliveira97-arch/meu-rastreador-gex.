@@ -96,28 +96,70 @@ if not calls_data.empty:
     else:
         st.info("💡 Mercado navegando em zona intermediária entre os muros institucionais.")
 
-    # --- HISTOGRAMA COM PORCENTAGENS NO HOVER ---
+    # --- HISTOGRAMA GEX (COM LINHA DE SPOT E PORCENTAGENS) ---
     st.subheader("📊 Histograma de Gamma Exposure (Força por Strike)")
     
-    total_abs_exposure = calls_data['GEX'].abs().sum() + puts_data['GEX'].abs().sum()
-    calls_data['forca_pct'] = (calls_data['GEX'].abs() / total_abs_exposure) * 100
-    puts_data['forca_pct'] = (puts_data['GEX'].abs() / total_abs_exposure) * 100
+    # Cálculo da Força Total para Porcentagem
+    total_abs = calls_data['GEX'].abs().sum() + puts_data['GEX'].abs().sum()
+    calls_data['forca'] = (calls_data['GEX'].abs() / total_abs) * 100
+    puts_data['forca'] = (puts_data['GEX'].abs() / total_abs) * 100
 
     fig_hist = go.Figure()
+
+    # Barras de Calls
     fig_hist.add_trace(go.Bar(
-        x=calls_data['strike'], y=calls_data['GEX'], name='Calls (Bullish)', marker_color='#00ffcc',
-        customdata=calls_data['forca_pct'],
-        hovertemplate="<b>Strike: %{x}</b><br>GEX: %{y:.2f}<br>Força: %{customdata:.2f}%<extra></extra>"
-    ))
-    fig_hist.add_trace(go.Bar(
-        x=puts_data['strike'], y=puts_data['GEX'], name='Puts (Bearish)', marker_color='#ff4b4b',
-        customdata=puts_data['forca_pct'],
-        hovertemplate="<b>Strike: %{x}</b><br>GEX: %{y:.2f}<br>Força: %{customdata:.2f}%<extra></extra>"
+        x=calls_data['strike'], 
+        y=calls_data['GEX'], 
+        name='Calls (Bullish)', 
+        marker_color='#00ffcc',
+        customdata=calls_data['forca'],
+        hovertemplate="<b>Strike: %{x}</b><br>GEX: %{y:,.0f}<br>Força: %{customdata:.2f}%<extra></extra>"
     ))
 
-    fig_hist.add_vline(x=current_price, line_width=2, line_dash="solid", line_color="white")
-    fig_hist.update_layout(template="plotly_dark", barmode='relative', hovermode="x unified",
-                          xaxis=dict(title="Strike ($)", range=[current_price * 0.96, current_price * 1.04]), height=500)
+    # Barras de Puts
+    fig_hist.add_trace(go.Bar(
+        x=puts_data['strike'], 
+        y=puts_data['GEX'], 
+        name='Puts (Bearish)', 
+        marker_color='#ff4b4b',
+        customdata=puts_data['forca'],
+        hovertemplate="<b>Strike: %{x}</b><br>GEX: %{y:,.0f}<br>Força: %{customdata:.2f}%<extra></extra>"
+    ))
+    
+    # --- A LINHA TRACEJADA DO SPOT (SOLICITADA) ---
+    fig_hist.add_vline(
+        x=current_price, 
+        line_dash="dash", 
+        line_color="white", 
+        line_width=2, 
+        layer="above"
+    )
+
+    # Etiqueta Flutuante do Preço Spot
+    fig_hist.add_annotation(
+        x=current_price, 
+        y=1.1, 
+        yref="paper",
+        text=f"SPOT: ${current_price:.2f}",
+        showarrow=False,
+        font=dict(color="black", size=12, family="Arial Black"),
+        bgcolor="white",
+        bordercolor="white",
+        borderwidth=2,
+        borderpad=4,
+        opacity=0.9
+    )
+
+    fig_hist.update_layout(
+        template="plotly_dark", 
+        barmode='relative', 
+        hovermode="x unified", 
+        xaxis=dict(title="Strike ($)", range=[current_price * 0.96, current_price * 1.04]),
+        yaxis=dict(title="Gamma Exposure (GEX)"),
+        height=600,
+        hoverlabel=dict(bgcolor="black", font_size=13)
+    )
+    
     st.plotly_chart(fig_hist, use_container_width=True)
 
     # --- GRÁFICO DE PREÇO ---
