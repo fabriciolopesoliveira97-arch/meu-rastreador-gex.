@@ -44,6 +44,7 @@ def get_gamma_data_v2(ticker_symbol):
         calls = options.calls[['strike', 'openInterest', 'impliedVolatility', 'lastPrice']].copy()
         puts = options.puts[['strike', 'openInterest', 'impliedVolatility', 'lastPrice']].copy()
 
+        # Cálculo da Gamma Pura e GEX Financeiro (Modelo Black-Scholes)
         calls['Gamma_Puro'] = calls.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']), axis=1)
         puts['Gamma_Puro'] = puts.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']), axis=1)
 
@@ -80,7 +81,7 @@ if not calls_data.empty:
     
     c1.metric("Status Mercado", status)
     
-    # Lógica de cor para o Net GEX: Verde se > 0, Vermelho se < 0
+    # Net GEX com cor dinâmica (Verde se positivo, Vermelho se negativo)
     c2.metric("Net GEX", f"{net_gex_total:.2f}M", 
               delta=f"{'Positivo' if net_gex_total > 0 else 'Negativo'}", 
               delta_color="normal" if net_gex_total > 0 else "inverse")
@@ -99,17 +100,27 @@ if not calls_data.empty:
     fig_candle.update_layout(template="plotly_dark", height=400, xaxis_rangeslider_visible=False)
     st.plotly_chart(fig_candle, use_container_width=True)
 
-    # --- HISTOGRAMA GEX ---
-    st.subheader("📊 Perfil de Exposição Gamma por Strike")
-    total_abs_gex = calls_data['GEX'].sum() + puts_data['GEX'].abs().sum()
-    calls_data['peso'] = (calls_data['GEX'] / total_abs_gex) * 100
-    puts_data['peso'] = (puts_data['GEX'].abs() / total_abs_gex) * 100
+    # --- HISTOGRAMA GEX (MANTENDO LÓGICA ORIGINAL) ---
+    st.subheader("📊 Histograma de Gamma Exposure")
+    total_abs = calls_data['GEX'].sum() + puts_data['GEX'].abs().sum()
+    calls_data['peso'] = (calls_data['GEX'] / total_abs) * 100
+    puts_data['peso'] = (puts_data['GEX'].abs() / total_abs) * 100
 
     fig_hist = go.Figure()
-    fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls', marker_color='#00ffcc', customdata=calls_data['peso'], hovertemplate="Strike: $%{x}<br>GEX: %{y:.2f}<br>Peso: %{customdata:.2f}%<extra></extra>"))
-    fig_hist.add_trace(go.Bar(x=puts_data['strike'], y=puts_data['GEX'], name='Puts', marker_color='#ff4b4b', customdata=puts_data['peso'], hovertemplate="Strike: $%{x}<br>GEX: %{y:.2f}<br>Peso: %{customdata:.2f}%<extra></extra>"))
-    fig_hist.add_vline(x=current_price, line_dash="dash", line_color="white", annotation_text="Spot")
-    fig_hist.update_layout(template="plotly_dark", barmode='relative', hovermode="x unified", xaxis=dict(range=[current_price * 0.96, current_price * 1.04]))
+    fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls (Alta)', marker_color='#00ffcc', 
+                              customdata=calls_data['peso'], hovertemplate="Strike: %{x}<br>GEX: %{y:.2f}<br>Peso: %{customdata:.2f}%<extra></extra>"))
+    fig_hist.add_trace(go.Bar(x=puts_data['strike'], y=puts_data['GEX'], name='Puts (Baixa)', marker_color='#ff4b4b', 
+                              customdata=puts_data['peso'], hovertemplate="Strike: %{x}<br>GEX: %{y:.2f}<br>Peso: %{customdata:.2f}%<extra></extra>"))
+    
+    # Linha e Etiqueta do Spot
+    fig_hist.add_vline(x=current_price, line_dash="dash", line_color="yellow", line_width=2, layer="above")
+    max_y = max(calls_data['GEX'].max(), puts_data['GEX'].abs().max())
+    fig_hist.add_annotation(x=current_price, y=max_y * 1.05, text=f"Preço Spot: ${current_price:.2f}", 
+                            showarrow=False, font=dict(color="white", size=12), bgcolor="rgba(0,0,0,0.5)")
+
+    fig_hist.update_layout(template="plotly_dark", barmode='relative', hovermode="x unified", 
+                          xaxis=dict(title="Strike Price ($)", range=[current_price * 0.97, current_price * 1.03]), height=500,
+                          hoverlabel=dict(bgcolor="black", font_size=13))
     st.plotly_chart(fig_hist, use_container_width=True)
 
     # --- DICIONÁRIO ESTRATÉGICO FINAL ---
@@ -120,23 +131,23 @@ if not calls_data.empty:
     with col_edu1:
         st.markdown(f"""
         ### 🟢 SUPRESSÃO (Gama Positivo)
-        * **Definição:** O preço está acima do **Zero Gamma (${levels['zero']})**.
-        * **Mecânica:** Market Makers "comprimem" a volatilidade comprando fundos.
-        * **Efeito:** Tendência de alta estável. Suportes são respeitados.
+        **Cenário:** O preço atual está **acima** do Zero Gamma (${levels['zero']}).
+        * **Mecânica:** Os Market Makers compram nas quedas e vendem nas altas para manter o hedge estável.
+        * **Efeito:** A volatilidade é "comprimida". O mercado tende a subir de escada e cair de elevador curto.
         
         ### 🧱 Put Wall (${levels['put']})
-        * O suporte mais forte. É o strike onde os grandes players têm o maior risco de queda protegido.
+        * É o suporte institucional mais forte do dia. Representa onde os Market Makers têm a maior obrigação de compra para defender o strike.
         """)
 
     with col_edu2:
         st.markdown(f"""
         ### 🔴 EXPANSÃO (Gama Negativo)
-        * **Definição:** O preço está abaixo do **Zero Gamma (${levels['zero']})**.
-        * **Mecânica:** "Feedback Loop" de vendas. Market Makers vendem conforme o preço cai.
-        * **Efeito:** Movimentos violentos e quedas rápidas.
-        
+        **Cenário:** O preço atual está **abaixo** do Zero Gamma (${levels['zero']}).
+        * **Mecânica:** Os Market Makers precisam vender conforme o ativo cai para ajustar o hedge, criando um efeito cascata.
+        * **Efeito:** A volatilidade "explode". Movimentos rápidos e direcionais (gaps e velas longas).
+
         ### 🏰 Call Wall (${levels['call']})
-        * A resistência principal. O teto onde o mercado tende a travar ou realizar lucros.
+        * É a resistência institucional principal. Onde a pressão de venda institucional é máxima para frear a euforia do mercado.
         """)
 else:
     st.error("Erro ao carregar dados.")
