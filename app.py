@@ -1,3 +1,7 @@
+import os
+from datetime import datetime
+# ... seus outros imports continuam abaixo
+
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -56,6 +60,16 @@ status_color = "#00f2ff" if status == "SUPRESSÃO" else "#ff4b4b"
 # --- 1. Cálculo do Net GEX e Organização dos Cards (Linha 56 a 63) ---
 calls_data, puts_data = get_gamma_data("QQQ")
 net_gex_total = (calls_data['GEX'].sum() + puts_data['GEX'].sum()) / 10**6 
+# --- Linha 57 e 58 (Cálculo) ---
+calls_data, puts_data = get_gamma_data("QQQ")
+net_gex_total = (calls_data['GEX'].sum() + puts_data['GEX'].sum()) / 10**6 
+
+# --- NOVA LINHA 59 (Cole isto aqui) ---
+salvar_historico(current_price, net_gex_total, levels)
+
+# --- Linha 60 em diante (Cards) ---
+c1, c2, c3, c4, c5 = st.columns(5)
+
 
         # --- Cards Visuais com Cores Automáticas ---
 c1, c2, c3, c4, c5 = st.columns(5)
@@ -179,3 +193,20 @@ try:
     st.plotly_chart(fig_hist, use_container_width=True)
 except Exception as e:
     st.info(f"Aguardando dados... {e}")
+def salvar_historico(p_price, p_gex, p_levels):
+    arquivo = 'historico_gex.csv'
+    data_hora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    nova_linha = pd.DataFrame([{
+        'Data': data_hora,
+        'Preço': p_price,
+        'NetGEX': p_gex,
+        'ZeroGamma': p_levels['zero'],
+        'PutWall': p_levels['put'],
+        'CallWall': p_levels['call']
+    }])
+    
+    if not os.path.isfile(arquivo):
+        nova_linha.to_csv(arquivo, index=False)
+    else:
+        nova_linha.to_csv(arquivo, mode='a', header=False, index=False)
