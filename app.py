@@ -60,19 +60,19 @@ net_gex_total = (calls_data['GEX'].sum() + puts_data['GEX'].sum()) / 10**6
         # --- Cards Visuais com Cores Automáticas ---
 c1, c2, c3, c4, c5 = st.columns(5)
         
-        c1.metric("Status Mercado", status)
+c1.metric("Status Mercado", status)
         
         # O segredo está no 'delta' abaixo para ativar o Verde/Vermelho
-        c2.metric(
-            label="Net GEX", 
-            value=f"{net_gex_total:.2f}M", 
-            delta=f"{net_gex_total:.2f}M", 
-            delta_color="normal" 
+c2.metric(
+label="Net GEX", 
+value=f"{net_gex_total:.2f}M", 
+delta=f"{net_gex_total:.2f}M", 
+delta_color="normal" 
         )
         
-        c3.metric("Zero Gamma", f"${levels['zero']}")
-        c4.metric("Put Wall", f"${levels['put']}", delta_color="inverse") # Vermelho se cair
-        c5.metric("Call Wall", f"${levels['call']}")
+c3.metric("Zero Gamma", f"${levels['zero']}")
+c4.metric("Put Wall", f"${levels['put']}", delta_color="inverse") # Vermelho se cair
+c5.metric("Call Wall", f"${levels['call']}")
 
 
 st.markdown(f"### Cenário Atual: <span style='color:{status_color}'>{status}</span>", unsafe_allow_html=True)
