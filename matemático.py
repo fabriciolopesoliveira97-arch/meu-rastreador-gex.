@@ -1,4 +1,3 @@
-import os
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -8,146 +7,121 @@ from scipy.stats import norm
 from datetime import datetime
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="GEX PRO - High Precision", layout="wide")
+st.set_page_config(page_title="GEX PRO - Market Real-Time", layout="wide")
 
 # --- 2. FUNÇÕES MATEMÁTICAS (BLACK-SCHOLES) ---
 def calculate_gamma(S, K, T, r, sigma):
-    """Calcula a grega Gamma matemática pura"""
-    if T <= 0 or sigma <= 0 or S <= 0:
-        return 0
+    if T <= 0 or sigma <= 0.0001 or S <= 0: return 0
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-    gamma = norm.pdf(d1) / (S * sigma * np.sqrt(T))
-    return gamma
+    return norm.pdf(d1) / (S * sigma * np.sqrt(T))
 
-# --- 3. FUNÇÕES DE DADOS ---
+def calculate_vanna(S, K, T, r, sigma):
+    if T <= 0 or sigma <= 0.0001 or S <= 0: return 0
+    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    d2 = d1 - sigma * np.sqrt(T)
+    # Vanna: dDelta / dSigma
+    return (norm.pdf(d1) * (d2 / sigma))
+
+# --- 3. OBTENÇÃO DE DADOS ---
 @st.cache_data(ttl=300)
-def get_gamma_data_v2(ticker_symbol):
-    try:
-        tk = yf.Ticker(ticker_symbol)
-        df_hist = tk.history(period="1d", interval="5m")
-        if df_hist.empty:
-            df_hist = tk.history(period="1d")
-        
-        if df_hist.empty:
-            return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame()
-            
-        S = df_hist['Close'].iloc[-1]
-        expiry_date = tk.options[0]
-        options = tk.option_chain(expiry_date)
-        
-        d_exp = datetime.strptime(expiry_date, '%Y-%m-%d')
-        d_now = datetime.now()
-        days_to_expiry = (d_exp - d_now).days + 1
-        T = max(days_to_expiry, 1) / 365.0
-        r = 0.045 
-
-        calls = options.calls[['strike', 'openInterest', 'impliedVolatility', 'lastPrice']].copy()
-        puts = options.puts[['strike', 'openInterest', 'impliedVolatility', 'lastPrice']].copy()
-
-        # Cálculo da Gamma Pura e GEX Financeiro (Modelo Black-Scholes)
-        calls['Gamma_Puro'] = calls.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']), axis=1)
-        puts['Gamma_Puro'] = puts.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']), axis=1)
-
-        calls['GEX'] = calls['Gamma_Puro'] * calls['openInterest'] * 100 * S**2 * 0.01
-        puts['GEX'] = puts['Gamma_Puro'] * puts['openInterest'] * 100 * S**2 * 0.01 * -1
-        
-        return calls, puts, S, df_hist
-    except:
-        return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame()
-
-def get_gamma_levels(calls, puts):
-    if calls.empty or puts.empty:
-        return {"zero": 0, "put": 0, "call": 0}
-    put_wall = puts.loc[puts['GEX'].abs().idxmax(), 'strike']
-    call_wall = calls.loc[calls['GEX'].idxmax(), 'strike']
-    df_total = pd.merge(calls, puts, on='strike', suffixes=('_c', '_p'))
-    df_total['net_gex'] = df_total['GEX_c'] + df_total['GEX_p']
-    zero_gamma = df_total.iloc[(df_total['net_gex']).abs().argsort()[:1]]['strike'].values[0]
-    return {"zero": zero_gamma, "put": put_wall, "call": call_wall}
-
-# --- 4. EXECUÇÃO ---
-ticker_symbol = "QQQ"
-calls_data, puts_data, current_price, df_price = get_gamma_data_v2(ticker_symbol)
-
-if not calls_data.empty:
-    levels = get_gamma_levels(calls_data, puts_data)
-    net_gex_total = (calls_data['GEX'].sum() + puts_data['GEX'].sum()) / 10**6
-    status = "SUPRESSÃO" if current_price > levels['zero'] else "EXPANSÃO"
-    status_color = "#00ffcc" if status == "SUPRESSÃO" else "#ff4b4b"
-
-    # --- MÉTRICAS COM CORES DINÂMICAS ---
-    st.title(f"🛡️ {ticker_symbol} Institutional Tracker")
-    c1, c2, c3, c4, c5 = st.columns(5)
+def get_market_data(ticker_symbol="QQQ"):
+    ticker = yf.Ticker(ticker_symbol)
     
-    c1.metric("Status Mercado", status)
+    # Preço Atual
+    hist = ticker.history(period="1d")
+    if hist.empty: return None
+    current_price = hist['Close'].iloc[-1]
     
-    # Net GEX com cor dinâmica (Verde se positivo, Vermelho se negativo)
-    c2.metric("Net GEX", f"{net_gex_total:.2f}M", 
-              delta=f"{'Positivo' if net_gex_total > 0 else 'Negativo'}", 
-              delta_color="normal" if net_gex_total > 0 else "inverse")
+    # Taxa de Juros (10Y Yield)
+    tnx = yf.Ticker("^TNX")
+    tnx_hist = tnx.history(period="1d")
+    r = tnx_hist['Close'].iloc[-1] / 100 if not tnx_hist.empty else 0.04
     
-    c3.metric("Zero Gamma", f"${levels['zero']}")
-    c4.metric("Put Wall", f"${levels['put']}")
-    c5.metric("Call Wall", f"${levels['call']}")
-
-    st.markdown(f"## Cenário Atual: <span style='color:{status_color}'>{status}</span>", unsafe_allow_html=True)
-
-    # --- GRÁFICO CANDLESTICK ---
-    fig_candle = go.Figure(data=[go.Candlestick(x=df_price.index, open=df_price['Open'], high=df_price['High'], low=df_price['Low'], close=df_price['Close'], name="Preço")])
-    fig_candle.add_hline(y=levels['zero'], line_dash="dash", line_color="yellow", annotation_text="Zero Gamma")
-    fig_candle.add_hline(y=levels['put'], line_color="green", line_width=2, annotation_text="Put Wall")
-    fig_candle.add_hline(y=levels['call'], line_color="red", line_width=2, annotation_text="Call Wall")
-    fig_candle.update_layout(template="plotly_dark", height=400, xaxis_rangeslider_visible=False)
-    st.plotly_chart(fig_candle, use_container_width=True)
-
-    # --- HISTOGRAMA GEX (MANTENDO LÓGICA ORIGINAL) ---
-    st.subheader("📊 Histograma de Gamma Exposure")
-    total_abs = calls_data['GEX'].sum() + puts_data['GEX'].abs().sum()
-    calls_data['peso'] = (calls_data['GEX'] / total_abs) * 100
-    puts_data['peso'] = (puts_data['GEX'].abs() / total_abs) * 100
-
-    fig_hist = go.Figure()
-    fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls (Alta)', marker_color='#00ffcc', 
-                              customdata=calls_data['peso'], hovertemplate="Strike: %{x}<br>GEX: %{y:.2f}<br>Peso: %{customdata:.2f}%<extra></extra>"))
-    fig_hist.add_trace(go.Bar(x=puts_data['strike'], y=puts_data['GEX'], name='Puts (Baixa)', marker_color='#ff4b4b', 
-                              customdata=puts_data['peso'], hovertemplate="Strike: %{x}<br>GEX: %{y:.2f}<br>Peso: %{customdata:.2f}%<extra></extra>"))
+    # Opções
+    expirations = ticker.options
+    if not expirations: return None
+    selected_expiry = expirations[0] 
     
-    # Linha e Etiqueta do Spot
-    fig_hist.add_vline(x=current_price, line_dash="dash", line_color="yellow", line_width=2, layer="above")
-    max_y = max(calls_data['GEX'].max(), puts_data['GEX'].abs().max())
-    fig_hist.add_annotation(x=current_price, y=max_y * 1.05, text=f"Preço Spot: ${current_price:.2f}", 
-                            showarrow=False, font=dict(color="white", size=12), bgcolor="rgba(0,0,0,0.5)")
+    opts = ticker.option_chain(selected_expiry)
+    
+    # Tempo para expiração
+    expiry_dt = datetime.strptime(selected_expiry, '%Y-%m-%d')
+    T = (expiry_dt - datetime.now()).total_seconds() / (365.25 * 24 * 3600)
+    if T <= 0: T = 0.001 # 1 dia p/ evitar erro
+    
+    return current_price, r, opts.calls, opts.puts, T, selected_expiry
 
-    fig_hist.update_layout(template="plotly_dark", barmode='relative', hovermode="x unified", 
-                          xaxis=dict(title="Strike Price ($)", range=[current_price * 0.97, current_price * 1.03]), height=500,
-                          hoverlabel=dict(bgcolor="black", font_size=13))
-    st.plotly_chart(fig_hist, use_container_width=True)
+# --- 4. PROCESSAMENTO ---
+data = get_market_data("QQQ")
 
-    # --- DICIONÁRIO ESTRATÉGICO FINAL ---
-    st.divider()
-    st.header("🧠 Dicionário Estratégico de Mercado")
-    col_edu1, col_edu2 = st.columns(2)
+if data:
+    current_price, r, calls, puts, T, expiry_date = data
 
-    with col_edu1:
-        st.markdown(f"""
-        ### 🟢 SUPRESSÃO (Gama Positivo)
-        **Cenário:** O preço atual está **acima** do Zero Gamma (${levels['zero']}).
-        * **Mecânica:** Os Market Makers compram nas quedas e vendem nas altas para manter o hedge estável.
-        * **Efeito:** A volatilidade é "comprimida". O mercado tende a subir de escada e cair de elevador curto.
+    def process_exposure(df, is_call=True):
+        df = df[df['openInterest'] > 0].copy()
+        df['iv'] = df['impliedVolatility'].apply(lambda x: x if x > 0 else 0.20)
         
-        ### 🧱 Put Wall (${levels['put']})
-        * É o suporte institucional mais forte do dia. Representa onde os Market Makers têm a maior obrigação de compra para defender o strike.
-        """)
+        df['gamma'] = df.apply(lambda x: calculate_gamma(current_price, x['strike'], T, r, x['iv']), axis=1)
+        df['vanna'] = df.apply(lambda x: calculate_vanna(current_price, x['strike'], T, r, x['iv']), axis=1)
+        
+        # GEX Notional (MM View)
+        # Call Gamma é positivo, Put Gamma é negativo para o Market Maker (assumindo que o público compra)
+        direction = 1 if is_call else -1
+        df['GEX'] = df['openInterest'] * df['gamma'] * (current_price**2) * 0.01 * direction * 100
+        df['VEX'] = df['openInterest'] * df['vanna'] * 100 * direction
+        return df
 
-    with col_edu2:
-        st.markdown(f"""
-        ### 🔴 EXPANSÃO (Gama Negativo)
-        **Cenário:** O preço atual está **abaixo** do Zero Gamma (${levels['zero']}).
-        * **Mecânica:** Os Market Makers precisam vender conforme o ativo cai para ajustar o hedge, criando um efeito cascata.
-        * **Efeito:** A volatilidade "explode". Movimentos rápidos e direcionais (gaps e velas longas).
+    calls = process_exposure(calls, is_call=True)
+    puts = process_exposure(puts, is_call=False)
+    
+    # Unificando
+    all_strikes = pd.concat([calls, puts])
+    gex_total = all_strikes.groupby('strike')['GEX'].sum().reset_index()
+    vex_total = all_strikes.groupby('strike')['VEX'].sum().reset_index()
 
-        ### 🏰 Call Wall (${levels['call']})
-        * É a resistência institucional principal. Onde a pressão de venda institucional é máxima para frear a euforia do mercado.
-        """)
+    # Cálculo do Gamma Flip (Onde cruza o zero)
+    gex_total = gex_total.sort_values('strike')
+    flip_price = np.interp(0, gex_total['GEX'], gex_total['strike'])
+
+    # --- 5. DASHBOARD ---
+    st.title(f"📊 GEX PRO - {expiry_date}")
+    
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("QQQ Spot", f"${current_price:.2f}")
+    c2.metric("Gamma Flip", f"${flip_price:.2f}")
+    c3.metric("Risk-Free (10Y)", f"{r*100:.2f}%")
+    c4.metric("Total Net GEX", f"${gex_total['GEX'].sum()/1e6:.1f}M")
+
+    # Gráfico GEX
+    fig_gex = go.Figure()
+    fig_gex.add_trace(go.Bar(
+        x=gex_total['strike'], 
+        y=gex_total['GEX'],
+        marker_color=np.where(gex_total['GEX'] >= 0, '#00CC96', '#EF553B')
+    ))
+    fig_gex.add_vline(x=current_price, line_dash="dash", line_color="white", annotation_text="SPOT")
+    fig_gex.add_vline(x=flip_price, line_dash="dot", line_color="yellow", annotation_text="FLIP")
+    
+    fig_gex.update_layout(
+        title="Net Gamma Exposure por Strike",
+        template="plotly_dark",
+        xaxis_range=[current_price * 0.90, current_price * 1.10],
+        yaxis_title="GEX Notional ($)"
+    )
+    st.plotly_chart(fig_gex, use_container_width=True)
+
+    # Gráfico VEX
+    fig_vex = go.Figure()
+    fig_vex.add_trace(go.Bar(x=vex_total['strike'], y=vex_total['VEX'], marker_color="#636EFA"))
+    fig_vex.add_vline(x=current_price, line_dash="dash", line_color="white", annotation_text="SPOT")
+    
+    fig_vex.update_layout(
+        title="Vanna Exposure (Sensibilidade à Volatilidade)",
+        template="plotly_dark",
+        xaxis_range=[current_price * 0.90, current_price * 1.10],
+        yaxis_title="Vanna Exposure"
+    )
+    st.plotly_chart(fig_vex, use_container_width=True)
+
 else:
-    st.error("Erro ao carregar dados.")
+    st.error("Erro ao carregar dados. Verifique o Ticker ou a conexão.")
