@@ -118,41 +118,46 @@ with col_vix2:
     else:
         st.info("🟢 RISCO: GAMA POSITIVO (Mercado Estável)")
 
-# --- HISTOGRAMA RESTAURADO (COM SPOT) ---
+# --- HISTOGRAMA COM PORCENTAGENS (PESO) ---
 st.subheader("📊 Histograma de Gamma Exposure")
+
+# Cálculo dos pesos para o tooltip
+total_gex_absoluto = calls_data['GEX'].sum() + puts_data['GEX'].abs().sum()
+calls_data['peso'] = (calls_data['GEX'] / total_gex_absoluto) * 100
+puts_data['peso'] = (puts_data['GEX'].abs() / total_gex_absoluto) * 100
 
 fig_hist = go.Figure()
 
-# Adiciona as barras com os nomes corrigidos (Alta/Baixa)
+# Adiciona Calls com Peso no hover
 fig_hist.add_trace(go.Bar(
     x=calls_data['strike'], 
     y=calls_data['GEX'], 
     name='Calls (Alta)', 
-    marker_color='#00ffcc'
+    marker_color='#00ffcc',
+    customdata=calls_data['peso'],
+    hovertemplate="<b>Strike: %{x}</b><br>Peso: %{customdata:.2f}%<extra></extra>"
 ))
+
+# Adiciona Puts com Peso no hover
 fig_hist.add_trace(go.Bar(
     x=puts_data['strike'], 
     y=puts_data['GEX'], 
     name='Puts (Baixa)', 
-    marker_color='#ff4b4b'
+    marker_color='#ff4b4b',
+    customdata=puts_data['peso'],
+    hovertemplate="<b>Strike: %{x}</b><br>Peso: %{customdata:.2f}%<extra></extra>"
 ))
 
-# ADICIONA A LINHA AMARELA (SPOT)
-fig_hist.add_vline(
-    x=current_price, 
-    line_dash="dash", 
-    line_color="yellow", 
-    line_width=2
-)
+# LINHA DO PREÇO SPOT
+fig_hist.add_vline(x=current_price, line_dash="dash", line_color="yellow", line_width=2)
 
-# ADICIONA O TEXTO EM CIMA DA LINHA
+# TEXTO DO PREÇO SPOT
 fig_hist.add_annotation(
     x=current_price,
     y=max(calls_data['GEX'].max(), puts_data['GEX'].abs().max()) * 1.1,
     text=f"Preço Spot: ${current_price:.2f}",
     showarrow=False,
-    font=dict(color="yellow", size=14),
-    bgcolor="rgba(0,0,0,0.5)"
+    font=dict(color="yellow", size=14)
 )
 
 fig_hist.update_layout(
@@ -160,7 +165,7 @@ fig_hist.update_layout(
     barmode='relative',
     xaxis_title="Strike Price ($)",
     yaxis_title="GEX Estimado",
-    xaxis=dict(range=[current_price * 0.97, current_price * 1.03]),
+    xaxis=dict(range=[current_price * 0.98, current_price * 1.02]), # Zoom mais focado
     legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99),
     height=500
 )
