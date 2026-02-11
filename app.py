@@ -118,17 +118,19 @@ with col_vix2:
     else:
         st.info("🟢 RISCO: GAMA POSITIVO (Mercado Estável)")
 
-# --- HISTOGRAMA COM PORCENTAGENS (PESO) ---
-st.subheader("📊 Histograma de Gamma Exposure")
-
-# Cálculo dos pesos para o tooltip
+# --- CÁLCULO DE PESOS E FORÇA RELATIVA ---
+# Calcula o GEX total absoluto (soma de Calls e o valor positivo das Puts)
 total_gex_absoluto = calls_data['GEX'].sum() + puts_data['GEX'].abs().sum()
+
+# Adiciona as porcentagens individuais para o gráfico
 calls_data['peso'] = (calls_data['GEX'] / total_gex_absoluto) * 100
 puts_data['peso'] = (puts_data['GEX'].abs() / total_gex_absoluto) * 100
 
+st.subheader("📊 Histograma de Gamma Exposure")
+
 fig_hist = go.Figure()
 
-# Adiciona Calls com Peso no hover
+# Barra de Calls (Alta) com Porcentagem
 fig_hist.add_trace(go.Bar(
     x=calls_data['strike'], 
     y=calls_data['GEX'], 
@@ -138,7 +140,7 @@ fig_hist.add_trace(go.Bar(
     hovertemplate="<b>Strike: %{x}</b><br>Peso: %{customdata:.2f}%<extra></extra>"
 ))
 
-# Adiciona Puts com Peso no hover
+# Barra de Puts (Baixa) com Porcentagem
 fig_hist.add_trace(go.Bar(
     x=puts_data['strike'], 
     y=puts_data['GEX'], 
@@ -148,16 +150,22 @@ fig_hist.add_trace(go.Bar(
     hovertemplate="<b>Strike: %{x}</b><br>Peso: %{customdata:.2f}%<extra></extra>"
 ))
 
-# LINHA DO PREÇO SPOT
-fig_hist.add_vline(x=current_price, line_dash="dash", line_color="yellow", line_width=2)
+# --- LINHA AMARELA (PREÇO SPOT) ---
+fig_hist.add_vline(
+    x=current_price, 
+    line_dash="dash", 
+    line_color="yellow", 
+    line_width=2
+)
 
-# TEXTO DO PREÇO SPOT
+# TEXTO INDICADOR "Preço Spot"
 fig_hist.add_annotation(
     x=current_price,
     y=max(calls_data['GEX'].max(), puts_data['GEX'].abs().max()) * 1.1,
     text=f"Preço Spot: ${current_price:.2f}",
     showarrow=False,
-    font=dict(color="yellow", size=14)
+    font=dict(color="white", size=12),
+    bgcolor="rgba(0,0,0,0.5)"
 )
 
 fig_hist.update_layout(
@@ -165,7 +173,7 @@ fig_hist.update_layout(
     barmode='relative',
     xaxis_title="Strike Price ($)",
     yaxis_title="GEX Estimado",
-    xaxis=dict(range=[current_price * 0.98, current_price * 1.02]), # Zoom mais focado
+    xaxis=dict(range=[current_price * 0.97, current_price * 1.03]),
     legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99),
     height=500
 )
