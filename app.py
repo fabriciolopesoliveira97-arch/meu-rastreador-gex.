@@ -6,6 +6,24 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
+def salvar_historico(p_price, p_gex, p_levels):
+    arquivo = 'historico_gex.csv'
+    data_hora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    nova_linha = pd.DataFrame([{
+        'Data': data_hora,
+        'Preço': p_price,
+        'NetGEX': p_gex,
+        'ZeroGamma': p_levels['zero'],
+        'PutWall': p_levels['put'],
+        'CallWall': p_levels['call']
+    }])
+    
+    if not os.path.isfile(arquivo):
+        nova_linha.to_csv(arquivo, index=False)
+    else:
+        nova_linha.to_csv(arquivo, mode='a', header=False, index=False)
+
 
 # Configuração da página estilo Dark
 st.set_page_config(page_title="GEX Tracker Nasdaq", layout="wide")
@@ -193,20 +211,3 @@ try:
     st.plotly_chart(fig_hist, use_container_width=True)
 except Exception as e:
     st.info(f"Aguardando dados... {e}")
-def salvar_historico(p_price, p_gex, p_levels):
-    arquivo = 'historico_gex.csv'
-    data_hora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
-    nova_linha = pd.DataFrame([{
-        'Data': data_hora,
-        'Preço': p_price,
-        'NetGEX': p_gex,
-        'ZeroGamma': p_levels['zero'],
-        'PutWall': p_levels['put'],
-        'CallWall': p_levels['call']
-    }])
-    
-    if not os.path.isfile(arquivo):
-        nova_linha.to_csv(arquivo, index=False)
-    else:
-        nova_linha.to_csv(arquivo, mode='a', header=False, index=False)
