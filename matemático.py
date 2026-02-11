@@ -4,123 +4,111 @@ import pandas as pd
 import plotly.graph_objects as go
 import numpy as np
 from scipy.stats import norm
-from datetime import datetime
 
-# --- CONFIGURAÇÃO ---
-st.set_page_config(page_title="GEX PRO Terminal", layout="wide")
+# --- CONFIGURAÇÃO DE TELA ---
+st.set_page_config(page_title="GEX PRO - Deep Analysis", layout="wide")
 
-# Estilização Dark
 st.markdown("""
     <style>
     .main { background-color: #0e1117; }
-    div[data-testid="stMetricValue"] { color: #00ffcc; }
+    [data-testid="stMetricValue"] { font-size: 1.8rem !important; color: #ffffff; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- MATEMÁTICA ---
+# --- ENGINE MATEMÁTICA ---
 def calc_gamma(S, K, T, r, sigma):
     if T <= 0 or sigma <= 0.0001: return 0
     d1 = (np.log(S/K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
     return norm.pdf(d1) / (S * sigma * np.sqrt(T))
 
-# --- BUSCA DE DADOS ---
 @st.cache_data(ttl=300)
-def fetch_data(symbol="QQQ"):
-    ticker = yf.Ticker(symbol)
-    hist = ticker.history(period="1d")
-    if hist.empty: return None
-    current_price = hist['Close'].iloc[-1]
-    
-    expirations = ticker.options
-    target_expiry = expirations[0] # 0DTE / Próxima semanal
-    
-    opts = ticker.option_chain(target_expiry)
-    calls, puts = opts.calls, opts.puts
-    
-    return current_price, calls, puts, target_expiry
+def get_data(symbol="QQQ"):
+    tk = yf.Ticker(symbol)
+    spot = tk.history(period="1d")['Close'].iloc[-1]
+    exp = tk.options[0] # 0DTE / Próxima semanal
+    chain = tk.option_chain(exp)
+    return spot, chain.calls, chain.puts, exp
 
 try:
-    spot, calls, puts, expiry = fetch_data("QQQ")
-    r = 0.045 # Taxa de juros aproximada
-    T = 1/252 # Tempo para expiração (diário)
+    spot_price, calls, puts, expiry_date = get_data("QQQ")
+    T, r = 1/252, 0.045 # Premissas padrão intraday
 
-    def process_gex(df, is_call=True):
-        # Filtramos apenas o que é necessário para o cálculo para evitar erro de soma de datas
-        df_clean = df[['strike', 'openInterest', 'impliedVolatility']].copy()
-        df_clean['iv'] = df_clean['impliedVolatility'].replace(0, 0.25)
+    def process_df(df, is_call=True):
+        # Limpeza rigorosa para evitar erro datetime64
+        data = df[['strike', 'openInterest', 'impliedVolatility']].copy()
+        data['iv'] = data['impliedVolatility'].replace(0, 0.25)
+        data['gamma'] = data.apply(lambda x: calc_gamma(spot_price, x['strike'], T, r, x['iv']), axis=1)
         
-        df_clean['gamma'] = df_clean.apply(lambda x: calc_gamma(spot, x['strike'], T, r, x['iv']), axis=1)
-        
-        side = 1 if is_call else -1
-        # Cálculo GEX Notional em Milhões
-        df_clean['GEX_Dollar'] = (df_clean['openInterest'] * df_clean['gamma'] * (spot**2) * 0.01 * 100 * side) / 1_000_000
-        return df_clean[['strike', 'GEX_Dollar']]
+        # GEX Notional (MM View: Long Calls / Long Puts)
+        # Para o gráfico espelhado: Calls (+), Puts (-)
+        mult = 1 if is_call else -1
+        data['GEX'] = data['openInterest'] * data['gamma'] * (spot_price**2) * 0.01 * 100 * mult
+        return data[['strike', 'GEX']]
 
-    calls_gex = process_gex(calls, True)
-    puts_gex = process_gex(puts, False)
+    df_calls = process_df(calls, True)
+    df_puts = process_df(puts, False)
 
-    # Agrupando apenas os valores numéricos (Strike e GEX)
-    all_data = pd.concat([calls_gex, puts_gex]).groupby('strike')['GEX_Dollar'].sum().reset_index()
-
-    # Níveis Críticos
-    zero_gamma = np.interp(0, all_data['GEX_Dollar'], all_data['strike'])
-    put_wall = all_data.loc[all_data['GEX_Dollar'].idxmin(), 'strike']
-    call_wall = all_data.loc[all_data['GEX_Dollar'].idxmax(), 'strike']
+    # Agrupamento por Strike
+    df_calls = df_calls.groupby('strike').sum().reset_index()
+    df_puts = df_puts.groupby('strike').sum().reset_index()
     
-    # Cenário
-    scenario = "SUPRESSÃO" if spot > zero_gamma else "EXPANSÃO"
-    color = "#00ffcc" if scenario == "SUPRESSÃO" else "#ff4b4b"
+    # Cálculo de "Força" (Percentual sobre a maior exposição)
+    total_abs_max = max(df_calls['GEX'].max(), abs(df_puts['GEX'].min()))
+    df_calls['forca'] = (df_calls['GEX'] / total_abs_max) * 100
+    df_puts['forca'] = (abs(df_puts['GEX']) / total_abs_max) * 100
 
-    # --- UI ---
-    st.title(f"📊 QQQ GEX PRO - {expiry}")
+    # Níveis de Preço
+    all_gex = pd.merge(df_calls, df_puts, on='strike', suffixes=('_c', '_p'))
+    all_gex['total'] = all_gex['GEX_c'] + all_gex['GEX_p']
+    zero_gamma = np.interp(0, all_gex['total'], all_gex['strike'])
+    call_wall = df_calls.loc[df_calls['GEX'].idxmax(), 'strike']
+    put_wall = df_puts.loc[df_puts['GEX'].idxmin(), 'strike']
+
+    # --- DASHBOARD UI ---
+    st.subheader(f"📊 Histograma de Gamma Exposure (Força por Strike) - {expiry_date}")
     
-    st.markdown(f"""
-        <div style="background-color: #161b22; padding: 15px; border-radius: 10px; border-left: 5px solid {color};">
-            <h2 style="margin:0; color: {color};">Cenário: {scenario}</h2>
-            <p style="color: gray;">Preço {'acima' if spot > zero_gamma else 'abaixo'} do Zero Gamma. Volatilidade {'suprimida' if spot > zero_gamma else 'acelerada'}.</p>
-        </div>
-    """, unsafe_allow_html=True)
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("SPOT", f"${spot_price:.2f}")
+    m2.metric("ZERO GAMMA", f"${zero_gamma:.2f}")
+    m3.metric("CALL WALL", f"${call_wall:.2f}")
+    m4.metric("PUT WALL", f"${put_wall:.2f}")
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Net GEX", f"{all_data['GEX_Dollar'].sum():.1f}M")
-    c2.metric("Zero Gamma", f"${zero_gamma:.2f}")
-    c3.metric("Put Wall", f"${put_wall:.2f}")
-    c4.metric("Call Wall", f"${call_wall:.2f}")
-
-    # --- GRÁFICO IGUAL À IMAGEM ---
+    # --- GRÁFICO ESPELHADO (EXATAMENTE COMO A IMAGEM) ---
     fig = go.Figure()
 
-    # Barras de Gamma
+    # Barras de Calls (Verde - para cima)
     fig.add_trace(go.Bar(
-        x=all_data['strike'],
-        y=all_data['GEX_Dollar'],
-        marker_color=np.where(all_data['GEX_Dollar'] >= 0, '#00cc96', '#ef553b'),
-        name="GEX"
+        x=df_calls['strike'], y=df_calls['GEX'],
+        name="Calls", marker_color='#00f2c3',
+        customdata=df_calls['forca'],
+        hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata:.2f}%<extra></extra>"
     ))
 
-    # Linhas Verticais (Estilo a imagem enviada)
-    fig.add_vline(x=spot, line_width=3, line_dash="solid", line_color="#00ffff", 
-                 annotation_text=f"SPOT: ${spot:.2f}", annotation_font_color="#00ffff")
-    
-    fig.add_vline(x=zero_gamma, line_width=2, line_dash="dash", line_color="yellow", 
-                 annotation_text=f"Zero Gamma: ${zero_gamma:.2f}", annotation_font_color="yellow")
-    
-    fig.add_vline(x=put_wall, line_width=2, line_dash="dash", line_color="#00ff00", 
-                 annotation_text=f"Put Wall: ${put_wall:.2f}", annotation_font_color="#00ff00")
+    # Barras de Puts (Vermelho - para baixo)
+    fig.add_trace(go.Bar(
+        x=df_puts['strike'], y=df_puts['GEX'],
+        name="Puts", marker_color='#ff5858',
+        customdata=df_puts['forca'],
+        hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata:.2f}%<extra></extra>"
+    ))
 
-    fig.add_vline(x=call_wall, line_width=2, line_dash="dash", line_color="#ff0000", 
-                 annotation_text=f"Call Wall: ${call_wall:.2f}", annotation_font_color="#ff0000")
+    # Linha do SPOT (Branca tracejada como na imagem)
+    fig.add_vline(x=spot_price, line_width=3, line_dash="dash", line_color="white")
+    fig.add_annotation(x=spot_price, y=total_abs_max*1.1, text=f"SPOT: ${spot_price:.2f}", 
+                       showarrow=False, bgcolor="white", font_color="black")
 
     fig.update_layout(
         template="plotly_dark",
-        height=600,
-        xaxis_title="Strike Price ($)",
-        yaxis_title="Gamma Exposure (Milhões $)",
-        xaxis_range=[spot*0.97, spot*1.03], # Zoom em volta do Spot
-        showlegend=False
+        barmode='relative',
+        height=700,
+        xaxis=dict(title="Strike Price ($)", range=[spot_price*0.96, spot_price*1.04]),
+        yaxis=dict(title="Gamma Exposure (Notional)", gridcolor="#222"),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
 
     st.plotly_chart(fig, use_container_width=True)
 
 except Exception as e:
-    st.error(f"Erro nos dados: {e}")
+    st.error(f"Erro ao processar: {e}")
