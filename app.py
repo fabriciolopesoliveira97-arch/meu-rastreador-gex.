@@ -118,39 +118,41 @@ with col_vix2:
     else:
         st.info("🟢 RISCO: GAMA POSITIVO (Mercado Estável)")
 
-# --- CÁLCULO DE PESOS E FORÇA RELATIVA ---
-# Calcula o GEX total absoluto (soma de Calls e o valor positivo das Puts)
-total_gex_absoluto = calls_data['GEX'].sum() + puts_data['GEX'].abs().sum()
+# --- CÁLCULO DE PESOS PARA COMPARAÇÃO ---
+# Cálculo baseado no GEX total absoluto para definir a força de cada nível
+total_gex_abs = calls_data['GEX'].sum() + puts_data['GEX'].abs().sum()
 
-# Adiciona as porcentagens individuais para o gráfico
-calls_data['peso'] = (calls_data['GEX'] / total_gex_absoluto) * 100
-puts_data['peso'] = (puts_data['GEX'].abs() / total_gex_absoluto) * 100
+# Adicionando colunas de peso para o gráfico
+calls_data['peso'] = (calls_data['GEX'] / total_gex_abs) * 100
+puts_data['peso'] = (puts_data['GEX'].abs() / total_gex_abs) * 100
 
 st.subheader("📊 Histograma de Gamma Exposure")
 
 fig_hist = go.Figure()
 
-# Barra de Calls (Alta) com Porcentagem
+# Adiciona as barras de Calls (Alta)
 fig_hist.add_trace(go.Bar(
     x=calls_data['strike'], 
     y=calls_data['GEX'], 
     name='Calls (Alta)', 
     marker_color='#00ffcc',
     customdata=calls_data['peso'],
-    hovertemplate="<b>Strike: %{x}</b><br>Peso: %{customdata:.2f}%<extra></extra>"
+    # Formatação do balão conforme a imagem: Strike e Peso
+    hovertemplate="Strike: %{x}<br>Peso: %{customdata:.2f}%<extra></extra>"
 ))
 
-# Barra de Puts (Baixa) com Porcentagem
+# Adiciona as barras de Puts (Baixa)
 fig_hist.add_trace(go.Bar(
     x=puts_data['strike'], 
     y=puts_data['GEX'], 
     name='Puts (Baixa)', 
     marker_color='#ff4b4b',
     customdata=puts_data['peso'],
-    hovertemplate="<b>Strike: %{x}</b><br>Peso: %{customdata:.2f}%<extra></extra>"
+    # Formatação do balão conforme a imagem: Strike e Peso
+    hovertemplate="Strike: %{x}<br>Peso: %{customdata:.2f}%<extra></extra>"
 ))
 
-# --- LINHA AMARELA (PREÇO SPOT) ---
+# --- LINHA AMARELA DO PREÇO SPOT ---
 fig_hist.add_vline(
     x=current_price, 
     line_dash="dash", 
@@ -158,7 +160,7 @@ fig_hist.add_vline(
     line_width=2
 )
 
-# TEXTO INDICADOR "Preço Spot"
+# ANOTAÇÃO DO PREÇO NO TOPO DA LINHA
 fig_hist.add_annotation(
     x=current_price,
     y=max(calls_data['GEX'].max(), puts_data['GEX'].abs().max()) * 1.1,
@@ -168,14 +170,23 @@ fig_hist.add_annotation(
     bgcolor="rgba(0,0,0,0.5)"
 )
 
+# CONFIGURAÇÃO VISUAL IDÊNTICA À IMAGEM
 fig_hist.update_layout(
     template="plotly_dark", 
     barmode='relative',
+    # 'x unified' faz aparecer a caixa comparativa com os dois valores juntos
+    hovermode="x unified",
     xaxis_title="Strike Price ($)",
     yaxis_title="GEX Estimado",
     xaxis=dict(range=[current_price * 0.97, current_price * 1.03]),
     legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99),
-    height=500
+    height=550,
+    # Estilização da caixa de hover para ficar preta como na foto
+    hoverlabel=dict(
+        bgcolor="black",
+        font_size=13,
+        font_family="Arial"
+    )
 )
 
 st.plotly_chart(fig_hist, use_container_width=True)
