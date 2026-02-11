@@ -21,7 +21,7 @@ def calculate_greeks(S, K, T, r, sigma):
     vanna = (norm.pdf(d1) * (d2 / sigma)) * -1 
     return gamma, vanna
 
-# --- 3. FUNÇÕES DE DADOS ---
+# --- 3. FUNÇÕES DE DADOS (ATUALIZAÇÃO AUTOMÁTICA) ---
 @st.cache_data(ttl=60)
 def get_gamma_data_v2(ticker_symbol):
     try:
@@ -41,11 +41,11 @@ def get_gamma_data_v2(ticker_symbol):
         calls = options.calls[['strike', 'openInterest', 'impliedVolatility', 'lastPrice']].copy()
         puts = options.puts[['strike', 'openInterest', 'impliedVolatility', 'lastPrice']].copy()
 
-        # Cálculos de Gamma e Vanna
         for df, is_put in [(calls, False), (puts, True)]:
             greeks = df.apply(lambda x: calculate_greeks(S, x['strike'], T, r, x['impliedVolatility']), axis=1)
             df['Gamma_Puro'] = greeks.apply(lambda x: x[0])
             df['Vanna_Pura'] = greeks.apply(lambda x: x[1])
+            # GEX Financeiro
             df['GEX'] = df['Gamma_Puro'] * df['openInterest'] * 100 * S * (1 if not is_put else -1)
         
         return calls, puts, S, df_hist
@@ -70,55 +70,54 @@ if not calls_data.empty:
     levels = get_gamma_levels(calls_data, puts_data)
     net_gex_total = (calls_data['GEX'].sum() + puts_data['GEX'].sum()) / 10**6
     
+    # --- CABEÇALHO E MÉTRICAS ---
     st.title(f"🛡️ {ticker_symbol} Institutional Tracker")
+    
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Net GEX", f"{net_gex_total:.2f}M")
+    
+    # Cor dinâmica para Net GEX
+    gex_color = "normal" if net_gex_total > 0 else "inverse"
+    c1.metric("Net GEX Total", f"{net_gex_total:.2f}M", delta=f"{'POSITIVO' if net_gex_total > 0 else 'NEGATIVO'}", delta_color=gex_color)
+    
     c2.metric("Zero Gamma", f"${levels['zero']}")
     c3.metric("Put Wall", f"${levels['put']}")
     c4.metric("Call Wall", f"${levels['call']}")
     c5.metric("Preço Spot", f"${current_price:.2f}")
 
+    # --- SISTEMA DE ALERTAS ---
+    st.divider()
+    dist_put = abs(current_price - levels['put']) / current_price
+    dist_call = abs(current_price - levels['call']) / current_price
+
+    if dist_put < 0.005: # Menos de 0.5% de distância
+        st.error(f"⚠️ ALERTA: Preço próximo ao PUT WALL (${levels['put']}). Possível zona de suporte institucional/rebatimento!")
+    elif dist_call < 0.005:
+        st.warning(f"⚠️ ALERTA: Preço próximo ao CALL WALL (${levels['call']}). Possível zona de exaustão/resistência!")
+    else:
+        st.info("💡 Mercado navegando em zona intermediária entre os muros institucionais.")
+
     # --- HISTOGRAMA COM PORCENTAGENS NO HOVER ---
-    st.subheader("📊 Histograma de Gamma Exposure (Força de Mercado)")
+    st.subheader("📊 Histograma de Gamma Exposure (Força por Strike)")
     
-    # Cálculo da Força Relativa (Porcentagem)
     total_abs_exposure = calls_data['GEX'].abs().sum() + puts_data['GEX'].abs().sum()
     calls_data['forca_pct'] = (calls_data['GEX'].abs() / total_abs_exposure) * 100
     puts_data['forca_pct'] = (puts_data['GEX'].abs() / total_abs_exposure) * 100
 
     fig_hist = go.Figure()
-    
-    # Adicionando Calls
     fig_hist.add_trace(go.Bar(
-        x=calls_data['strike'], 
-        y=calls_data['GEX'], 
-        name='Calls (Compradores)', 
-        marker_color='#00ffcc',
+        x=calls_data['strike'], y=calls_data['GEX'], name='Calls (Bullish)', marker_color='#00ffcc',
         customdata=calls_data['forca_pct'],
-        hovertemplate="<b>Strike: %{x}</b><br>GEX: %{y:.2f}<br>Força no Mercado: %{customdata:.2f}%<extra></extra>"
+        hovertemplate="<b>Strike: %{x}</b><br>GEX: %{y:.2f}<br>Força: %{customdata:.2f}%<extra></extra>"
     ))
-    
-    # Adicionando Puts
     fig_hist.add_trace(go.Bar(
-        x=puts_data['strike'], 
-        y=puts_data['GEX'], 
-        name='Puts (Vendedores)', 
-        marker_color='#ff4b4b',
+        x=puts_data['strike'], y=puts_data['GEX'], name='Puts (Bearish)', marker_color='#ff4b4b',
         customdata=puts_data['forca_pct'],
-        hovertemplate="<b>Strike: %{x}</b><br>GEX: %{y:.2f}<br>Força no Mercado: %{customdata:.2f}%<extra></extra>"
+        hovertemplate="<b>Strike: %{x}</b><br>GEX: %{y:.2f}<br>Força: %{customdata:.2f}%<extra></extra>"
     ))
 
-    # Linha Branca para o Preço Spot Atual
     fig_hist.add_vline(x=current_price, line_width=2, line_dash="solid", line_color="white")
-    fig_hist.add_annotation(x=current_price, y=0, text="SPOT", bgcolor="white", font=dict(color="black"))
-
-    fig_hist.update_layout(
-        template="plotly_dark", 
-        barmode='relative', 
-        hovermode="x unified",
-        xaxis=dict(title="Strike ($)", range=[current_price * 0.96, current_price * 1.04]),
-        height=500
-    )
+    fig_hist.update_layout(template="plotly_dark", barmode='relative', hovermode="x unified",
+                          xaxis=dict(title="Strike ($)", range=[current_price * 0.96, current_price * 1.04]), height=500)
     st.plotly_chart(fig_hist, use_container_width=True)
 
     # --- GRÁFICO DE PREÇO ---
@@ -130,4 +129,6 @@ if not calls_data.empty:
     st.plotly_chart(fig_candle, use_container_width=True)
 
 else:
-    st.error("Erro ao carregar dados.")
+    st.error("Erro ao carregar dados. Verifique o ticker ou a conexão.")
+
+    
