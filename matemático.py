@@ -36,11 +36,18 @@ def get_gamma_data_v2(ticker_symbol):
         S = df_hist['Close'].iloc[-1]
         
         # Seleciona o vencimento mais próximo (Geralmente 0DTE para QQQ)
+                S = df_hist['Close'].iloc[-1]
+        
+        # AQUI COMEÇA O CÓDIGO NOVO (Alinhado com o S acima)
         hoje = datetime.now().strftime('%Y-%m-%d')
-vencimentos_validos = [d for d in tk.options if d >= hoje]
+        vencimentos_validos = [d for d in tk.options if d >= hoje]
+        
+        if not vencimentos_validos:
+            return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame()
+            
+        expiry_date = vencimentos_validos[0]
+        options = tk.option_chain(expiry_date)
 
-if not vencimentos_validos:
-    return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame()
 
 expiry_date = vencimentos_validos[0]
 
