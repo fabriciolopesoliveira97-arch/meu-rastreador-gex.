@@ -58,7 +58,7 @@ calls_data, puts_data = get_gamma_data("QQQ")
 net_gex_total = (calls_data['GEX'].sum() + puts_data['GEX'].sum()) / 10**6 
 
         # --- Cards Visuais com Cores Automáticas ---
-        c1, c2, c3, c4, c5 = st.columns(5)
+c1, c2, c3, c4, c5 = st.columns(5)
         
         c1.metric("Status Mercado", status)
         
