@@ -118,17 +118,51 @@ with col_vix2:
     else:
         st.info("🟢 RISCO: GAMA POSITIVO (Mercado Estável)")
 
-# Histograma
+# --- HISTOGRAMA RESTAURADO (COM SPOT) ---
 st.subheader("📊 Histograma de Gamma Exposure")
-total_gex_abs = calls_data['GEX'].sum() + puts_data['GEX'].abs().sum()
 
 fig_hist = go.Figure()
-fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls', marker_color='#00ffcc'))
-fig_hist.add_trace(go.Bar(x=puts_data['strike'], y=puts_data['GEX'], name='Puts', marker_color='#ff4b4b'))
+
+# Adiciona as barras com os nomes corrigidos (Alta/Baixa)
+fig_hist.add_trace(go.Bar(
+    x=calls_data['strike'], 
+    y=calls_data['GEX'], 
+    name='Calls (Alta)', 
+    marker_color='#00ffcc'
+))
+fig_hist.add_trace(go.Bar(
+    x=puts_data['strike'], 
+    y=puts_data['GEX'], 
+    name='Puts (Baixa)', 
+    marker_color='#ff4b4b'
+))
+
+# ADICIONA A LINHA AMARELA (SPOT)
+fig_hist.add_vline(
+    x=current_price, 
+    line_dash="dash", 
+    line_color="yellow", 
+    line_width=2
+)
+
+# ADICIONA O TEXTO EM CIMA DA LINHA
+fig_hist.add_annotation(
+    x=current_price,
+    y=max(calls_data['GEX'].max(), puts_data['GEX'].abs().max()) * 1.1,
+    text=f"Preço Spot: ${current_price:.2f}",
+    showarrow=False,
+    font=dict(color="yellow", size=14),
+    bgcolor="rgba(0,0,0,0.5)"
+)
 
 fig_hist.update_layout(
-    template="plotly_dark", barmode='relative',
+    template="plotly_dark", 
+    barmode='relative',
+    xaxis_title="Strike Price ($)",
+    yaxis_title="GEX Estimado",
     xaxis=dict(range=[current_price * 0.97, current_price * 1.03]),
-    height=400
+    legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99),
+    height=500
 )
+
 st.plotly_chart(fig_hist, use_container_width=True)
