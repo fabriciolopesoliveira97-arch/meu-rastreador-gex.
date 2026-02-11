@@ -53,14 +53,19 @@ levels = get_gamma_levels()
 status = "SUPRESSÃO" if current_price > levels['zero'] else "EXPANSÃO"
 status_color = "#00f2ff" if status == "SUPRESSÃO" else "#ff4b4b"
 
-# Exibição dos Cards Visuais
-c1, c2, c3, c4 = st.columns(4)
+# --- 1. Cálculo do Net GEX e Organização dos Cards (Linha 56 a 63) ---
+calls_data, puts_data = get_gamma_data("QQQ")
+net_gex_total = (calls_data['GEX'].sum() + puts_data['GEX'].sum()) / 10**6 
+
+c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Status Mercado", status)
-c2.metric("Zero Gamma", f"${levels['zero']}")
-c3.metric("Put Wall", f"${levels['put']}")
-c4.metric("Call Wall", f"${levels['call']}")
-# Abaixo do seu st.plotly_chart(fig, ...) na linha 46
+c2.metric("Net GEX", f"{net_gex_total:.2f}M")
+c3.metric("Zero Gamma", f"${levels['zero']}")
+c4.metric("Put Wall", f"${levels['put']}")
+c5.metric("Call Wall", f"${levels['call']}")
+
 st.markdown(f"### Cenário Atual: <span style='color:{status_color}'>{status}</span>", unsafe_allow_html=True)
+
 
 # Gráfico de Preço com as Linhas
 fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'])])
