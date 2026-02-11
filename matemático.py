@@ -126,22 +126,57 @@ if not calls_data.empty:
         else:
             st.info("🟢 REGIME ESTÁVEL: GAMA POSITIVO (Volatilidade Comprimida)")
 
-    # --- HISTOGRAMA GEX ---
-    st.subheader("📊 Perfil de Exposição Financeira (GEX)")
+    # --- HISTOGRAMA GEX (ESTILIZADO COM HOVER DETALHADO) ---
+    st.subheader("📊 Perfil de Exposição Financeira (GEX por Strike)")
+    
+    # Cálculo de pesos para o hover
+    total_abs_gex = calls_data['GEX'].sum() + puts_data['GEX'].abs().sum()
+    calls_data['peso'] = (calls_data['GEX'] / total_abs_gex) * 100
+    puts_data['peso'] = (puts_data['GEX'].abs() / total_abs_gex) * 100
+
     fig_hist = go.Figure()
-    fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls', marker_color='#00ffcc'))
-    fig_hist.add_trace(go.Bar(x=puts_data['strike'], y=puts_data['GEX'], name='Puts', marker_color='#ff4b4b'))
-    fig_hist.update_layout(template="plotly_dark", barmode='relative', xaxis=dict(range=[current_price * 0.95, current_price * 1.05]))
+
+    # Trace de Calls
+    fig_hist.add_trace(go.Bar(
+        x=calls_data['strike'], 
+        y=calls_data['GEX'], 
+        name='Calls (Gamma +)', 
+        marker_color='#00ffcc',
+        customdata=calls_data['peso'],
+        hovertemplate="<b>Strike:</b> $%{x}<br><b>GEX:</b> %{y:.2f}<br><b>Peso:</b> %{customdata:.2f}%<extra></extra>"
+    ))
+
+    # Trace de Puts
+    fig_hist.add_trace(go.Bar(
+        x=puts_data['strike'], 
+        y=puts_data['GEX'], 
+        name='Puts (Gamma -)', 
+        marker_color='#ff4b4b',
+        customdata=puts_data['peso'],
+        hovertemplate="<b>Strike:</b> $%{x}<br><b>GEX:</b> %{y:.2f}<br><b>Peso:</b> %{customdata:.2f}%<extra></extra>"
+    ))
+    
+    # Linha do Preço Spot (Preço Atual)
+    fig_hist.add_vline(
+        x=current_price, 
+        line_dash="dash", 
+        line_color="yellow", 
+        line_width=2,
+        annotation_text=f"SPOT: ${current_price:.2f}",
+        annotation_position="top left"
+    )
+
+    fig_hist.update_layout(
+        template="plotly_dark", 
+        barmode='relative',
+        hovermode="x unified", # Agrupa o hover se houver call e put no mesmo strike
+        xaxis=dict(
+            title="Strike Price ($)", 
+            range=[current_price * 0.95, current_price * 1.05] # Zoom de 5% em volta do preço
+        ),
+        yaxis=dict(title="Exposição Financeira (GEX)"),
+        height=550,
+        showlegend=True
+    )
+    
     st.plotly_chart(fig_hist, use_container_width=True)
-
-    # --- DICIONÁRIO ESTRATÉGICO ---
-    st.divider()
-    st.header("🧠 Dicionário Estratégico")
-    e1, e2 = st.columns(2)
-    with e1:
-        st.markdown(f"### 🟢 SUPRESSÃO\nPreço acima de ${levels['zero']}. Market Makers compram quedas. Volatilidade baixa.")
-    with e2:
-        st.markdown(f"### 🔴 EXPANSÃO\nPreço abaixo de ${levels['zero']}. Market Makers vendem quedas. Risco de 'Flash Crash'.")
-
-else:
-    st.error("Erro ao carregar dados. Tente novamente em instantes.")
