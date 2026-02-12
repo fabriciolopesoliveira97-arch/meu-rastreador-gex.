@@ -36,7 +36,7 @@ def get_gamma_data_v2(ticker_symbol):
         S = df_hist['Close'].iloc[-1]
         
         # Seleciona o vencimento mais próximo (Geralmente 0DTE para QQQ)
-                S = df_hist['Close'].iloc[-1]
+        S = df_hist['Close'].iloc[-1]
         
         # AQUI COMEÇA O CÓDIGO NOVO (Alinhado com o S acima)
         hoje = datetime.now().strftime('%Y-%m-%d')
