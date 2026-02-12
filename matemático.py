@@ -53,14 +53,26 @@ def get_gamma_data_v2(ticker_symbol):
         T = max(days_to_expiry, 1) / 365.0
         r = 0.045 
 
-        # FILTRO DE SEGURANÇA: Pega apenas strikes próximos ao preço atual (Spot)
-        # Isso evita que strikes mortos em 700+ distorçam o seu cálculo
-        margin = 0.15  # Filtra 15% para cima e para baixo
-        calls = options.calls[(options.calls['strike'] > S * (1-margin)) & (options.calls['strike'] < S * (1+margin))].copy()
-        puts = options.puts[(options.puts['strike'] > S * (1-margin)) & (options.puts['strike'] < S * (1+margin))].copy()
+        # 1. Filtro de Liquidez e Proximidade (O SEGREDO PARA PRECISÃO)
+        # Filtramos apenas strikes com Open Interest > 50 e dentro de 5% do preço spot
+        # Isso remove o "lixo" de strikes como 700+ que distorcem o cálculo
+        margin = 0.05 
+        calls = options.calls[(options.calls['strike'] > S * (1-margin)) & 
+                              (options.calls['strike'] < S * (1+margin)) & 
+                              (options.calls['openInterest'] > 50)].copy()
+        
+        puts = options.puts[(options.puts['strike'] > S * (1-margin)) & 
+                            (options.puts['strike'] < S * (1+margin)) & 
+                            (options.puts['openInterest'] > 50)].copy()
 
-        # Cálculo da Gamma Pura e GEX
+        # 2. Cálculo da Gamma Pura e GEX (Mantendo sua fórmula corrigida)
         calls['Gamma_Puro'] = calls.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']), axis=1)
+        puts['Gamma_Puro'] = puts.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']), axis=1)
+
+        # GEX Financeiro ajustado para contratos de 100 ações
+        calls['GEX'] = calls['Gamma_Puro'] * calls['openInterest'] * 100 * S**2 * 0.01
+        puts['GEX'] = puts['Gamma_Puro'] * puts['openInterest'] * 100 * S**2 * 0.01 * -1
+
         puts['Gamma_Puro'] = puts.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']), axis=1)
 
         calls['GEX'] = calls['Gamma_Puro'] * calls['openInterest'] * 100 * S**2 * 0.01
