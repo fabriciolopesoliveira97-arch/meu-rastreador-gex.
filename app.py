@@ -45,6 +45,13 @@ def get_gamma_data_v2(ticker_symbol):
         calls['GEX'] = calls.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']) * x['openInterest'] * 100 * S**2 * 0.01, axis=1)
         puts['GEX'] = puts.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']) * x['openInterest'] * 100 * S**2 * 0.01 * -1, axis=1)
         
+        # --- LIMPEZA DE OUTLIERS (NOVO) ---
+        # Remove valores que fogem totalmente da realidade (acima de 3 desvios padrão)
+        for df in [calls, puts]:
+            if not df.empty:
+                q_high = df['GEX'].abs().quantile(0.99)
+                df.drop(df[df['GEX'].abs() > q_high * 10].index, inplace=True)
+
         return calls, puts, S, df_hist, expiry_date
     except:
         return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame(), ""
@@ -112,7 +119,7 @@ if not calls_data.empty and not puts_data.empty:
 
     st.markdown(f"### Cenário Atual: **{'SUPRESSÃO' if current_price > levels['zero'] else 'EXPANSÃO'}**")
 
-    # --- AJUSTE NO HISTOGRAMA (CORREÇÃO DA ESCALA) ---
+    # --- HISTOGRAMA COM CORREÇÃO DEFINITIVA DE ESCALA ---
     fig_hist = go.Figure()
     fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls', marker_color='#00ffcc',
                              hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>",
@@ -122,16 +129,16 @@ if not calls_data.empty and not puts_data.empty:
                              customdata=puts_data['Força']))
     fig_hist.add_vline(x=current_price, line_dash="dash", line_color="white", annotation_text=f"SPOT: ${current_price:.2f}")
     
-    # Aqui travamos o eixo Y para não ser distorcido por valores gigantes fora do radar
-    # Ele vai focar no máximo e mínimo dos strikes que estão aparecendo na tela.
-    gex_max = max(calls_data['GEX'].max(), abs(puts_data['GEX'].min()))
+    # Cálculo de escala baseado no percentil 95 para evitar que erros de dados estiquem o gráfico
+    all_gex = pd.concat([calls_data['GEX'], puts_data['GEX'].abs()])
+    limit_y = all_gex.quantile(0.95) * 1.5 # Pega o valor "normal" e dá 50% de folga
     
     fig_hist.update_layout(
         template="plotly_dark", 
         barmode='relative', 
         height=350, 
         hovermode="x unified",
-        yaxis=dict(range=[-gex_max * 1.1, gex_max * 1.1]) # Dá um respiro de 10% acima e abaixo
+        yaxis=dict(range=[-limit_y, limit_y]) # Trava a escala no que é visível e real
     )
     st.plotly_chart(fig_hist, use_container_width=True)
 
