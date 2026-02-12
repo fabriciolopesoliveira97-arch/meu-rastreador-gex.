@@ -26,11 +26,11 @@ def get_gamma_data_v2(ticker_symbol):
         tk = yf.Ticker(ticker_symbol)
         df_hist = tk.history(period="1d", interval="5m")
         if df_hist.empty: df_hist = tk.history(period="1d")
-        if df_hist.empty: return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame()
+        if df_hist.empty: return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame(), ""
         
         S = df_hist['Close'].iloc[-1]
         vencimentos = tk.options
-        if not vencimentos: return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame()
+        if not vencimentos: return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame(), ""
             
         expiry_date = vencimentos[0]
         options = tk.option_chain(expiry_date)
@@ -38,7 +38,6 @@ def get_gamma_data_v2(ticker_symbol):
         T = max((d_exp - datetime.now()).days + 1, 1) / 365.0
         r = 0.045 
 
-        # Filtro de margem para focar no que importa
         margin = 0.10 
         calls = options.calls[(options.calls['strike'] > S*(1-margin)) & (options.calls['strike'] < S*(1+margin)) & (options.calls['openInterest'] > 20)].copy()
         puts = options.puts[(options.puts['strike'] > S*(1-margin)) & (options.puts['strike'] < S*(1+margin)) & (options.puts['openInterest'] > 20)].copy()
@@ -46,29 +45,23 @@ def get_gamma_data_v2(ticker_symbol):
         calls['GEX'] = calls.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']) * x['openInterest'] * 100 * S**2 * 0.01, axis=1)
         puts['GEX'] = puts.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']) * x['openInterest'] * 100 * S**2 * 0.01 * -1, axis=1)
         
-        return calls, puts, S, df_hist
+        return calls, puts, S, df_hist, expiry_date
     except:
-        return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame(), ""
 
 def get_gamma_levels(calls, puts, S):
     if calls.empty or puts.empty: return {"zero": 0, "put": 0, "call": 0}
     
-    # Walls
     call_wall = calls.loc[calls['GEX'].idxmax(), 'strike']
     put_wall = puts.loc[puts['GEX'].abs().idxmax(), 'strike']
     
-    # --- NOVA LÓGICA ZERO GAMMA (ANTIDISTORÇÃO) ---
     df_total = pd.concat([calls[['strike', 'GEX']], puts[['strike', 'GEX']]])
     df_net = df_total.groupby('strike')['GEX'].sum().reset_index().sort_values('strike')
     
-    # 1. Primeiro, ignoramos strikes que estão muito longe do preço atual (Spot)
-    # Isso evita que o código "pule" para o 604 se o preço estiver em 613
     df_prox = df_net[(df_net['strike'] >= S - 5) & (df_net['strike'] <= S + 5)]
-    
-    if df_prox.empty: # Se a margem for muito pequena, abre um pouco
+    if df_prox.empty:
         df_prox = df_net[(df_net['strike'] >= S * 0.95) & (df_net['strike'] <= S * 1.05)]
 
-    # 2. Procuramos onde o valor cruza o zero (inversão de sinal)
     df_prox['prev_GEX'] = df_prox['GEX'].shift(1)
     crossing = df_prox[((df_prox['GEX'] > 0) & (df_prox['prev_GEX'] < 0)) | 
                        ((df_prox['GEX'] < 0) & (df_prox['prev_GEX'] > 0))]
@@ -76,20 +69,23 @@ def get_gamma_levels(calls, puts, S):
     if not crossing.empty:
         zero_gamma = crossing.iloc[0]['strike']
     else:
-        # 3. Se não houver cruzamento, pegamos o strike mais próximo do preço atual (Spot)
-        # que tenha o menor Net GEX absoluto
         zero_gamma = df_prox.iloc[(df_prox['GEX']).abs().argsort()[:1]]['strike'].values[0]
         
     return {"zero": zero_gamma, "put": put_wall, "call": call_wall}
 
 # --- 4. INTERFACE ---
+st.title("GEX PRO - Real Time")
 ticker_symbol = st.sidebar.text_input("Ticker", value="QQQ").upper()
-calls_data, puts_data, current_price, df_price = get_gamma_data_v2(ticker_symbol)
+calls_data, puts_data, current_price, df_price, current_expiry = get_gamma_data_v2(ticker_symbol)
+
+# --- NOVA LINHA DE STATUS ---
+if current_expiry:
+    now = datetime.now().strftime("%H:%M:%S")
+    st.info(f"🕒 **Última Atualização:** {now} | 📅 **Vencimento Analisado:** {current_expiry} | 🔍 **Ticker:** {ticker_symbol}")
 
 if not calls_data.empty and not puts_data.empty:
     levels = get_gamma_levels(calls_data, puts_data, current_price)
     
-    # Força em %
     total_abs_gex = calls_data['GEX'].sum() + puts_data['GEX'].abs().sum()
     calls_data['Força'] = (calls_data['GEX'] / total_abs_gex * 100).round(2)
     puts_data['Força'] = (puts_data['GEX'].abs() / total_abs_gex * 100).round(2)
@@ -104,10 +100,15 @@ if not calls_data.empty and not puts_data.empty:
     else:
         st.success(f"✅ ESTABILIDADE: GAMA POSITIVO - Pivô: ${levels['zero']}")
 
-    # MÉTRICAS
+    # MÉTRICAS COM LÓGICA DE COR (VERMELHO SE NEGATIVO)
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Preço Atual", f"${current_price:.2f}")
-    c2.metric("Net GEX", f"{net_gex_total:.2f}M", delta="Positivo" if net_gex_total > 0 else "Negativo")
+    c2.metric(
+        "Net GEX", 
+        f"{net_gex_total:.2f}M", 
+        delta="Positivo" if net_gex_total > 0 else "Negativo",
+        delta_color="normal" if net_gex_total > 0 else "inverse"
+    )
     c3.metric("Zero Gamma", f"${levels['zero']}")
     c4.metric("Put Wall", f"${levels['put']}")
     c5.metric("Call Wall", f"${levels['call']}")
@@ -136,7 +137,8 @@ if not calls_data.empty and not puts_data.empty:
 
 else:
     st.warning("Aguardando dados... Verifique se o mercado está aberto.")
-# --- 5. GUIA DE OPERAÇÃO E GLOSSÁRIO (Adicione ao final do arquivo) ---
+
+# --- 5. GUIA DE OPERAÇÃO E GLOSSÁRIO ---
 st.divider()
 with st.expander("📖 Guia de Leitura - Como interpretar o GEX PRO"):
     st.markdown("""
