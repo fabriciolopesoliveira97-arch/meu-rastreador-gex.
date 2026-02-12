@@ -23,13 +23,12 @@ def calculate_gamma(S, K, T, r, sigma):
     gamma = norm.pdf(d1) / (S * sigma * np.sqrt(T))
     return gamma
 
-# --- 3. FUNÇÕES DE DADOS ---
+# --- 3. FUNÇÕES DE DADOS (Substituir da linha 25 até a 55) ---
 @st.cache_data(ttl=300)
 def get_gamma_data_v2(ticker_symbol):
     try:
         tk = yf.Ticker(ticker_symbol)
         df_hist = tk.history(period="1d", interval="5m")
-        
         if df_hist.empty:
             df_hist = tk.history(period="1d")
         
@@ -38,20 +37,35 @@ def get_gamma_data_v2(ticker_symbol):
             
         S = df_hist['Close'].iloc[-1]
         
-        # Pega as datas de vencimento disponíveis
+        # Filtro de vencimento
         vencimentos = tk.options
         if not vencimentos:
             return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame()
             
-        # (Adicione 4 espaços no início de cada linha abaixo se colar manualmente)
         expiry_date = vencimentos[0]
         options = tk.option_chain(expiry_date)
         
         d_exp = datetime.strptime(expiry_date, '%Y-%m-%d')
-        d_now = datetime.now()
-        days_to_expiry = (d_exp - d_now).days + 1
-        T = max(days_to_expiry, 1) / 365.0
+        T = max((d_exp - datetime.now()).days + 1, 1) / 365.0
         r = 0.045 
+
+        # --- FILTRO DE PRECISÃO (Para bater com o mercado real) ---
+        margin = 0.05 # Foca em 5% ao redor do preço
+        c_raw = options.calls
+        p_raw = options.puts
+        
+        calls = c_raw[(c_raw['strike'] > S*(1-margin)) & (c_raw['strike'] < S*(1+margin)) & (c_raw['openInterest'] > 50)].copy()
+        puts = p_raw[(p_raw['strike'] > S*(1-margin)) & (p_raw['strike'] < S*(1+margin)) & (p_raw['openInterest'] > 50)].copy()
+
+        calls['Gamma_Puro'] = calls.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']), axis=1)
+        puts['Gamma_Puro'] = puts.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']), axis=1)
+
+        calls['GEX'] = calls['Gamma_Puro'] * calls['openInterest'] * 100 * S**2 * 0.01
+        puts['GEX'] = puts['Gamma_Puro'] * puts['openInterest'] * 100 * S**2 * 0.01 * -1
+        
+        return calls, puts, S, df_hist
+    except:
+        return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame()
 
         # 1. Filtro de Liquidez e Proximidade (O SEGREDO PARA PRECISÃO)
         # Filtramos apenas strikes com Open Interest > 50 e dentro de 5% do preço spot
@@ -61,12 +75,24 @@ def get_gamma_data_v2(ticker_symbol):
                               (options.calls['strike'] < S * (1+margin)) & 
                               (options.calls['openInterest'] > 50)].copy()
         
-        puts = options.puts[(options.puts['strike'] > S * (1-margin)) & 
-                            (options.puts['strike'] < S * (1+margin)) & 
-                            (options.puts['openInterest'] > 50)].copy()
+        # Lógica de cor dinâmica para o Net GEX
+    gex_color = "normal" if net_gex_total > 0 else "inverse"
 
-        # 2. Cálculo da Gamma Pura e GEX (Mantendo sua fórmula corrigida)
-        calls['Gamma_Puro'] = calls.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']), axis=1)
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Status Mercado", status)
+    
+    # Métrica do Net GEX com cor dinâmica baseada no valor
+    c2.metric(
+        label="Net GEX", 
+        value=f"{net_gex_total:.2f}M", 
+        delta=f"{'Positivo' if net_gex_total > 0 else 'Negativo'}", 
+        delta_color=gex_color
+    )
+    
+    c3.metric("Zero Gamma", f"${levels['zero']}")
+    c4.metric("Put Wall", f"${levels['put']}")
+    c5.metric("Call Wall", f"${levels['call']}")
+
         puts['Gamma_Puro'] = puts.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']), axis=1)
 
         # GEX Financeiro ajustado para contratos de 100 ações
