@@ -14,8 +14,7 @@ st_autorefresh(interval=60 * 1000, key="datarefresh")
 
 # --- 2. FUNÇÕES MATEMÁTICAS ---
 def calculate_gamma(S, K, T, r, sigma):
-    if T <= 0 or sigma <= 0 or S <= 0:
-        return 0
+    if T <= 0 or sigma <= 0 or S <= 0: return 0
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
     gamma = norm.pdf(d1) / (S * sigma * np.sqrt(T))
     return gamma
@@ -26,71 +25,44 @@ def get_gamma_data_v2(ticker_symbol):
     try:
         tk = yf.Ticker(ticker_symbol)
         df_hist = tk.history(period="1d", interval="5m")
-        if df_hist.empty:
-            df_hist = tk.history(period="1d")
+        if df_hist.empty: df_hist = tk.history(period="1d")
+        if df_hist.empty: return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame()
         
-        if df_hist.empty:
-            return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame()
-            
         S = df_hist['Close'].iloc[-1]
         vencimentos = tk.options
-        if not vencimentos:
-            return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame()
+        if not vencimentos: return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame()
             
-        expiry_date = vencimentos[0]
-        options = tk.option_chain(expiry_date)
-        
-        d_exp = datetime.strptime(expiry_date, '%Y-%m-%d')
+        options = tk.option_chain(vencimentos[0])
+        d_exp = datetime.strptime(vencimentos[0], '%Y-%m-%d')
         T = max((d_exp - datetime.now()).days + 1, 1) / 365.0
         r = 0.045 
 
-        # Margem de 5% para garantir que foquemos no preço atual
-        margin = 0.05 
-        
-        calls = options.calls[(options.calls['strike'] > S*(1-margin)) & 
-                              (options.calls['strike'] < S*(1+margin)) & 
-                              (options.calls['openInterest'] > 10) & # Filtro de liquidez real
-                              (options.calls['impliedVolatility'] > 0.001)].copy()
-        
-        puts = options.puts[(options.puts['strike'] > S*(1-margin)) & 
-                            (options.puts['strike'] < S*(1+margin)) & 
-                            (options.puts['openInterest'] > 10) & 
-                            (options.puts['impliedVolatility'] > 0.001)].copy()
+        # Filtro de proximidade para evitar distorções (Zero Gamma fixo em strikes mortos)
+        margin = 0.10 
+        calls = options.calls[(options.calls['strike'] > S*(1-margin)) & (options.calls['strike'] < S*(1+margin)) & (options.calls['openInterest'] > 10)].copy()
+        puts = options.puts[(options.puts['strike'] > S*(1-margin)) & (options.puts['strike'] < S*(1+margin)) & (options.puts['openInterest'] > 10)].copy()
 
         calls['GEX'] = calls.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']) * x['openInterest'] * 100 * S**2 * 0.01, axis=1)
         puts['GEX'] = puts.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']) * x['openInterest'] * 100 * S**2 * 0.01 * -1, axis=1)
         
         return calls, puts, S, df_hist
-    except Exception as e:
-        st.error(f"Erro nos dados: {e}")
+    except:
         return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame()
 
 def get_gamma_levels(calls, puts, S):
-    if calls.empty or puts.empty:
-        return {"zero": 0, "put": 0, "call": 0}
-    
-    # Call e Put Wall baseados no volume financeiro real
+    if calls.empty or puts.empty: return {"zero": 0, "put": 0, "call": 0}
     call_wall = calls.loc[calls['GEX'].idxmax(), 'strike']
     put_wall = puts.loc[puts['GEX'].abs().idxmax(), 'strike']
     
-    # CÁLCULO DO ZERO GAMMA (CORRIGIDO)
     df_total = pd.concat([calls[['strike', 'GEX']], puts[['strike', 'GEX']]])
     df_net = df_total.groupby('strike')['GEX'].sum().reset_index().sort_values('strike')
     
-    # Filtramos apenas strikes próximos ao preço spot para evitar o erro dos $604
-    df_prox = df_net[(df_net['strike'] > S * 0.98) & (df_net['strike'] < S * 1.02)]
-    
-    # Se houver cruzamento de sinal perto do preço, esse é o Zero Gamma real
+    # Busca o Zero Gamma próximo ao preço atual (Spot)
+    df_prox = df_net[(df_net['strike'] > S * 0.95) & (df_net['strike'] < S * 1.05)]
     df_prox['prev_GEX'] = df_prox['GEX'].shift(1)
-    crossing = df_prox[((df_prox['GEX'] > 0) & (df_prox['prev_GEX'] < 0)) | 
-                       ((df_prox['GEX'] < 0) & (df_prox['prev_GEX'] > 0))]
+    crossing = df_prox[((df_prox['GEX'] > 0) & (df_prox['prev_GEX'] < 0)) | ((df_prox['GEX'] < 0) & (df_prox['prev_GEX'] > 0))]
     
-    if not crossing.empty:
-        zero_gamma = crossing.iloc[0]['strike']
-    else:
-        # Se não houver cruzamento, pega o valor mais próximo do preço atual (Spot)
-        zero_gamma = df_prox.iloc[(df_prox['GEX']).abs().argsort()[:1]]['strike'].values[0]
-    
+    zero_gamma = crossing.iloc[0]['strike'] if not crossing.empty else df_prox.iloc[(df_prox['GEX']).abs().argsort()[:1]]['strike'].values[0]
     return {"zero": zero_gamma, "put": put_wall, "call": call_wall}
 
 # --- 4. INTERFACE ---
@@ -101,23 +73,43 @@ if not calls_data.empty and not puts_data.empty:
     levels = get_gamma_levels(calls_data, puts_data, current_price)
     net_gex_total = (calls_data['GEX'].sum() + puts_data['GEX'].sum()) / 10**6
     
-    status = "SUPRESSÃO (🛡️ MM Comprados)" if current_price > levels['zero'] else "EXPANSÃO (🔥 MM Vendidos)"
-    gex_color = "normal" if net_gex_total > 0 else "inverse"
-
-    st.title(f"📊 {ticker_symbol} - Monitor de Liquidez")
+    # ALERTAS DINÂMICOS (Conforme Imagens)
+    if current_price < levels['put']:
+        st.error(f"⚠️ ABAIXO DO SUPORTE: Preço furou a Put Wall (${levels['put']})")
     
+    if current_price < levels['zero']:
+        st.warning("🔥 RISCO: GAMA NEGATIVO (Movimentos Explosivos)")
+    else:
+        st.success("✅ ESTABILIDADE: GAMA POSITIVO (Volatilidade Controlada)")
+
+    # MÉTRICAS PRINCIPAIS
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Preço Atual", f"${current_price:.2f}")
-    c2.metric("Net GEX", f"{net_gex_total:.2f}M", delta=f"{'Bullish' if net_gex_total > 0 else 'Bearish'}", delta_color=gex_color)
+    c2.metric("Net GEX", f"{net_gex_total:.2f}M", delta="Positivo" if net_gex_total > 0 else "Negativo")
     c3.metric("Zero Gamma", f"${levels['zero']}")
     c4.metric("Put Wall", f"${levels['put']}")
     c5.metric("Call Wall", f"${levels['call']}")
 
+    # CENÁRIO ATUAL
+    cenario = "SUPRESSÃO" if current_price > levels['zero'] else "EXPANSÃO"
+    cor_cenario = "#00ffcc" if cenario == "SUPRESSÃO" else "#ff4b4b"
+    st.markdown(f"### Cenário Atual: <span style='color:{cor_cenario}'>{cenario}</span>", unsafe_allow_html=True)
+
+    # HISTOGRAMA DE GAMMA (Conforme Imagem)
+    st.subheader("📊 Histograma de Gamma Exposure (Força por Strike)")
+    df_hist_plot = pd.concat([calls_data[['strike', 'GEX']], puts_data[['strike', 'GEX']]])
+    fig_hist = go.Figure()
+    fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls', marker_color='#00ffcc'))
+    fig_hist.add_trace(go.Bar(x=puts_data['strike'], y=puts_data['GEX'], name='Puts', marker_color='#ff4b4b'))
+    fig_hist.add_vline(x=current_price, line_dash="dash", line_color="white", annotation_text=f"SPOT: ${current_price:.2f}")
+    fig_hist.update_layout(template="plotly_dark", barmode='relative', height=400)
+    st.plotly_chart(fig_hist, use_container_width=True)
+
+    # GRÁFICO DE VELAS
     fig_candle = go.Figure(data=[go.Candlestick(x=df_price.index, open=df_price['Open'], high=df_price['High'], low=df_price['Low'], close=df_price['Close'], name="Preço")])
     fig_candle.add_hline(y=levels['zero'], line_dash="dash", line_color="yellow", annotation_text="ZERO GAMMA")
-    fig_candle.add_hline(y=levels['put'], line_color="#00ff00", line_width=2, annotation_text="PUT WALL")
-    fig_candle.add_hline(y=levels['call'], line_color="#ff4b4b", line_width=2, annotation_text="CALL WALL")
-    fig_candle.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False)
+    fig_candle.update_layout(template="plotly_dark", height=500, xaxis_rangeslider_visible=False)
     st.plotly_chart(fig_candle, use_container_width=True)
 
-    st.info(f"O Zero Gamma de **${levels['zero']}** agora reflete a zona de equilíbrio próxima ao preço de mercado (**${current_price:.2f}**).")
+else:
+    st.warning("Aguardando dados da API... Verifique se o mercado está aberto.")
