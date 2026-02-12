@@ -10,8 +10,6 @@ from streamlit_autorefresh import st_autorefresh
 
 # --- 1. CONFIGURAÇÃO E AUTO-REFRESH ---
 st.set_page_config(page_title="GEX PRO - Real Time", layout="wide")
-
-# Atualiza a página a cada 60 segundos
 st_autorefresh(interval=60 * 1000, key="datarefresh")
 
 # --- 2. FUNÇÕES MATEMÁTICAS ---
@@ -35,7 +33,6 @@ def get_gamma_data_v2(ticker_symbol):
             return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame()
             
         S = df_hist['Close'].iloc[-1]
-        
         vencimentos = tk.options
         if not vencimentos:
             return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame()
@@ -47,16 +44,17 @@ def get_gamma_data_v2(ticker_symbol):
         T = max((d_exp - datetime.now()).days + 1, 1) / 365.0
         r = 0.045 
 
-        # Margem de 5% para focar na liquidez próxima ao preço atual
+        # Margem de 5% para garantir que foquemos no preço atual
         margin = 0.05 
+        
         calls = options.calls[(options.calls['strike'] > S*(1-margin)) & 
                               (options.calls['strike'] < S*(1+margin)) & 
-                              (options.calls['openInterest'] > 50) & 
+                              (options.calls['openInterest'] > 10) & # Filtro de liquidez real
                               (options.calls['impliedVolatility'] > 0.001)].copy()
         
         puts = options.puts[(options.puts['strike'] > S*(1-margin)) & 
                             (options.puts['strike'] < S*(1+margin)) & 
-                            (options.puts['openInterest'] > 50) & 
+                            (options.puts['openInterest'] > 10) & 
                             (options.puts['impliedVolatility'] > 0.001)].copy()
 
         calls['GEX'] = calls.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']) * x['openInterest'] * 100 * S**2 * 0.01, axis=1)
@@ -64,33 +62,34 @@ def get_gamma_data_v2(ticker_symbol):
         
         return calls, puts, S, df_hist
     except Exception as e:
-        st.error(f"Erro ao processar dados: {e}")
+        st.error(f"Erro nos dados: {e}")
         return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame()
 
-def get_gamma_levels(calls, puts):
+def get_gamma_levels(calls, puts, S):
     if calls.empty or puts.empty:
         return {"zero": 0, "put": 0, "call": 0}
     
-    # CALL WALL: Strike com maior GEX positivo (Resistência)
+    # Call e Put Wall baseados no volume financeiro real
     call_wall = calls.loc[calls['GEX'].idxmax(), 'strike']
-    
-    # PUT WALL: Strike com maior GEX negativo (Suporte)
     put_wall = puts.loc[puts['GEX'].abs().idxmax(), 'strike']
     
-    # ZERO GAMMA: Localiza o ponto onde a exposição líquida inverte o sinal (Cruzamento real)
+    # CÁLCULO DO ZERO GAMMA (CORRIGIDO)
     df_total = pd.concat([calls[['strike', 'GEX']], puts[['strike', 'GEX']]])
     df_net = df_total.groupby('strike')['GEX'].sum().reset_index().sort_values('strike')
     
-    df_net['prev_GEX'] = df_net['GEX'].shift(1)
-    # Procura onde o GEX cruza de negativo para positivo ou vice-versa
-    crossing = df_net[((df_net['GEX'] > 0) & (df_net['prev_GEX'] < 0)) | 
-                       ((df_net['GEX'] < 0) & (df_net['prev_GEX'] > 0))]
+    # Filtramos apenas strikes próximos ao preço spot para evitar o erro dos $604
+    df_prox = df_net[(df_net['strike'] > S * 0.98) & (df_net['strike'] < S * 1.02)]
+    
+    # Se houver cruzamento de sinal perto do preço, esse é o Zero Gamma real
+    df_prox['prev_GEX'] = df_prox['GEX'].shift(1)
+    crossing = df_prox[((df_prox['GEX'] > 0) & (df_prox['prev_GEX'] < 0)) | 
+                       ((df_prox['GEX'] < 0) & (df_prox['prev_GEX'] > 0))]
     
     if not crossing.empty:
         zero_gamma = crossing.iloc[0]['strike']
     else:
-        # Fallback para o valor mais próximo de zero caso não haja cruzamento
-        zero_gamma = df_net.iloc[(df_net['GEX']).abs().argsort()[:1]]['strike'].values[0]
+        # Se não houver cruzamento, pega o valor mais próximo do preço atual (Spot)
+        zero_gamma = df_prox.iloc[(df_prox['GEX']).abs().argsort()[:1]]['strike'].values[0]
     
     return {"zero": zero_gamma, "put": put_wall, "call": call_wall}
 
@@ -99,35 +98,26 @@ ticker_symbol = st.sidebar.text_input("Ticker", value="QQQ").upper()
 calls_data, puts_data, current_price, df_price = get_gamma_data_v2(ticker_symbol)
 
 if not calls_data.empty and not puts_data.empty:
-    levels = get_gamma_levels(calls_data, puts_data)
+    levels = get_gamma_levels(calls_data, puts_data, current_price)
     net_gex_total = (calls_data['GEX'].sum() + puts_data['GEX'].sum()) / 10**6
     
     status = "SUPRESSÃO (🛡️ MM Comprados)" if current_price > levels['zero'] else "EXPANSÃO (🔥 MM Vendidos)"
     gex_color = "normal" if net_gex_total > 0 else "inverse"
 
     st.title(f"📊 {ticker_symbol} - Monitor de Liquidez")
-    st.write(f"Última atualização: {datetime.now().strftime('%H:%M:%S')}")
-
+    
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Preço Atual", f"${current_price:.2f}")
-    c2.metric("Net GEX", f"{net_gex_total:.2f}M", delta=f"{'Positivo' if net_gex_total > 0 else 'Negativo'}", delta_color=gex_color)
+    c2.metric("Net GEX", f"{net_gex_total:.2f}M", delta=f"{'Bullish' if net_gex_total > 0 else 'Bearish'}", delta_color=gex_color)
     c3.metric("Zero Gamma", f"${levels['zero']}")
     c4.metric("Put Wall", f"${levels['put']}")
     c5.metric("Call Wall", f"${levels['call']}")
 
-    fig_candle = go.Figure(data=[go.Candlestick(
-        x=df_price.index, open=df_price['Open'], high=df_price['High'], 
-        low=df_price['Low'], close=df_price['Close'], name="Preço"
-    )])
-    
+    fig_candle = go.Figure(data=[go.Candlestick(x=df_price.index, open=df_price['Open'], high=df_price['High'], low=df_price['Low'], close=df_price['Close'], name="Preço")])
     fig_candle.add_hline(y=levels['zero'], line_dash="dash", line_color="yellow", annotation_text="ZERO GAMMA")
     fig_candle.add_hline(y=levels['put'], line_color="#00ff00", line_width=2, annotation_text="PUT WALL")
     fig_candle.add_hline(y=levels['call'], line_color="#ff4b4b", line_width=2, annotation_text="CALL WALL")
-    
     fig_candle.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False)
     st.plotly_chart(fig_candle, use_container_width=True)
 
-    st.info(f"O mercado está em zona de **{status}**. Nível crítico em **${levels['zero']}**.")
-
-else:
-    st.warning("Aguardando dados... Verifique o ticker ou o horário do mercado.")
+    st.info(f"O Zero Gamma de **${levels['zero']}** agora reflete a zona de equilíbrio próxima ao preço de mercado (**${current_price:.2f}**).")
