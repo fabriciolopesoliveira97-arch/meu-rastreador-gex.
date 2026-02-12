@@ -32,12 +32,13 @@ def get_gamma_data_v2(ticker_symbol):
         vencimentos = tk.options
         if not vencimentos: return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame()
             
-        options = tk.option_chain(vencimentos[0])
-        d_exp = datetime.strptime(vencimentos[0], '%Y-%m-%d')
+        expiry_date = vencimentos[0]
+        options = tk.option_chain(expiry_date)
+        d_exp = datetime.strptime(expiry_date, '%Y-%m-%d')
         T = max((d_exp - datetime.now()).days + 1, 1) / 365.0
         r = 0.045 
 
-        # Filtro de proximidade para evitar distorções (Zero Gamma fixo em strikes mortos)
+        # Filtro de precisão para evitar o erro do Zero Gamma em strikes mortos
         margin = 0.10 
         calls = options.calls[(options.calls['strike'] > S*(1-margin)) & (options.calls['strike'] < S*(1+margin)) & (options.calls['openInterest'] > 10)].copy()
         puts = options.puts[(options.puts['strike'] > S*(1-margin)) & (options.puts['strike'] < S*(1+margin)) & (options.puts['openInterest'] > 10)].copy()
@@ -51,13 +52,14 @@ def get_gamma_data_v2(ticker_symbol):
 
 def get_gamma_levels(calls, puts, S):
     if calls.empty or puts.empty: return {"zero": 0, "put": 0, "call": 0}
+    
+    # Walls baseadas no maior GEX absoluto
     call_wall = calls.loc[calls['GEX'].idxmax(), 'strike']
     put_wall = puts.loc[puts['GEX'].abs().idxmax(), 'strike']
     
+    # Zero Gamma por cruzamento de sinal perto do Spot
     df_total = pd.concat([calls[['strike', 'GEX']], puts[['strike', 'GEX']]])
     df_net = df_total.groupby('strike')['GEX'].sum().reset_index().sort_values('strike')
-    
-    # Busca o Zero Gamma próximo ao preço atual (Spot)
     df_prox = df_net[(df_net['strike'] > S * 0.95) & (df_net['strike'] < S * 1.05)]
     df_prox['prev_GEX'] = df_prox['GEX'].shift(1)
     crossing = df_prox[((df_prox['GEX'] > 0) & (df_prox['prev_GEX'] < 0)) | ((df_prox['GEX'] < 0) & (df_prox['prev_GEX'] > 0))]
@@ -73,7 +75,7 @@ if not calls_data.empty and not puts_data.empty:
     levels = get_gamma_levels(calls_data, puts_data, current_price)
     net_gex_total = (calls_data['GEX'].sum() + puts_data['GEX'].sum()) / 10**6
     
-    # ALERTAS DINÂMICOS (Conforme Imagens)
+    # ALERTAS DE RISCO (Conforme imagens enviadas)
     if current_price < levels['put']:
         st.error(f"⚠️ ABAIXO DO SUPORTE: Preço furou a Put Wall (${levels['put']})")
     
@@ -82,7 +84,7 @@ if not calls_data.empty and not puts_data.empty:
     else:
         st.success("✅ ESTABILIDADE: GAMA POSITIVO (Volatilidade Controlada)")
 
-    # MÉTRICAS PRINCIPAIS
+    # MÉTRICAS
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Preço Atual", f"${current_price:.2f}")
     c2.metric("Net GEX", f"{net_gex_total:.2f}M", delta="Positivo" if net_gex_total > 0 else "Negativo")
@@ -95,21 +97,25 @@ if not calls_data.empty and not puts_data.empty:
     cor_cenario = "#00ffcc" if cenario == "SUPRESSÃO" else "#ff4b4b"
     st.markdown(f"### Cenário Atual: <span style='color:{cor_cenario}'>{cenario}</span>", unsafe_allow_html=True)
 
-    # HISTOGRAMA DE GAMMA (Conforme Imagem)
-    st.subheader("📊 Histograma de Gamma Exposure (Força por Strike)")
-    df_hist_plot = pd.concat([calls_data[['strike', 'GEX']], puts_data[['strike', 'GEX']]])
+    # HISTOGRAMA DE GAMMA
+    st.subheader("📊 Histograma de Gamma Exposure")
     fig_hist = go.Figure()
     fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls', marker_color='#00ffcc'))
     fig_hist.add_trace(go.Bar(x=puts_data['strike'], y=puts_data['GEX'], name='Puts', marker_color='#ff4b4b'))
     fig_hist.add_vline(x=current_price, line_dash="dash", line_color="white", annotation_text=f"SPOT: ${current_price:.2f}")
-    fig_hist.update_layout(template="plotly_dark", barmode='relative', height=400)
+    fig_hist.update_layout(template="plotly_dark", barmode='relative', height=350)
     st.plotly_chart(fig_hist, use_container_width=True)
 
-    # GRÁFICO DE VELAS
+    # GRÁFICO DE VELAS (Restaurado com Call e Put Walls)
     fig_candle = go.Figure(data=[go.Candlestick(x=df_price.index, open=df_price['Open'], high=df_price['High'], low=df_price['Low'], close=df_price['Close'], name="Preço")])
+    
+    # Linhas de Níveis restauradas
     fig_candle.add_hline(y=levels['zero'], line_dash="dash", line_color="yellow", annotation_text="ZERO GAMMA")
+    fig_candle.add_hline(y=levels['put'], line_color="green", line_width=2, annotation_text="PUT WALL")
+    fig_candle.add_hline(y=levels['call'], line_color="red", line_width=2, annotation_text="CALL WALL")
+    
     fig_candle.update_layout(template="plotly_dark", height=500, xaxis_rangeslider_visible=False)
     st.plotly_chart(fig_candle, use_container_width=True)
 
 else:
-    st.warning("Aguardando dados da API... Verifique se o mercado está aberto.")
+    st.warning("Aguardando dados... Verifique se o mercado está aberto.")
