@@ -45,8 +45,7 @@ def get_gamma_data_v2(ticker_symbol):
         calls['GEX'] = calls.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']) * x['openInterest'] * 100 * S**2 * 0.01, axis=1)
         puts['GEX'] = puts.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']) * x['openInterest'] * 100 * S**2 * 0.01 * -1, axis=1)
         
-        # --- LIMPEZA DE OUTLIERS (NOVO) ---
-        # Remove valores que fogem totalmente da realidade (acima de 3 desvios padrão)
+        # Limpeza de outliers para não distorcer o histograma
         for df in [calls, puts]:
             if not df.empty:
                 q_high = df['GEX'].abs().quantile(0.99)
@@ -119,7 +118,7 @@ if not calls_data.empty and not puts_data.empty:
 
     st.markdown(f"### Cenário Atual: **{'SUPRESSÃO' if current_price > levels['zero'] else 'EXPANSÃO'}**")
 
-    # --- HISTOGRAMA COM CORREÇÃO DEFINITIVA DE ESCALA ---
+    # HISTOGRAMA COM ESCALA CORRIGIDA
     fig_hist = go.Figure()
     fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls', marker_color='#00ffcc',
                              hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>",
@@ -129,16 +128,12 @@ if not calls_data.empty and not puts_data.empty:
                              customdata=puts_data['Força']))
     fig_hist.add_vline(x=current_price, line_dash="dash", line_color="white", annotation_text=f"SPOT: ${current_price:.2f}")
     
-    # Cálculo de escala baseado no percentil 95 para evitar que erros de dados estiquem o gráfico
     all_gex = pd.concat([calls_data['GEX'], puts_data['GEX'].abs()])
-    limit_y = all_gex.quantile(0.95) * 1.5 # Pega o valor "normal" e dá 50% de folga
+    limit_y = all_gex.quantile(0.95) * 1.5
     
     fig_hist.update_layout(
-        template="plotly_dark", 
-        barmode='relative', 
-        height=350, 
-        hovermode="x unified",
-        yaxis=dict(range=[-limit_y, limit_y]) # Trava a escala no que é visível e real
+        template="plotly_dark", barmode='relative', height=350, hovermode="x unified",
+        yaxis=dict(range=[-limit_y, limit_y])
     )
     st.plotly_chart(fig_hist, use_container_width=True)
 
@@ -152,22 +147,43 @@ if not calls_data.empty and not puts_data.empty:
 else:
     st.warning("Aguardando dados... Verifique se o mercado está aberto.")
 
+# --- 5. GUIA DE OPERAÇÃO DETALHADO ---
 st.divider()
-with st.expander("📖 Guia de Leitura - Como interpretar o GEX PRO"):
+with st.expander("📖 GUIA GEX PRO: Como interpretar as métricas e o cenário"):
     st.markdown("""
-    ### 🛡️ O que significam os níveis?
-    * **Zero Gamma:** Pivô do mercado. Acima = Supressão. Abaixo = Expansão.
-    * **Call Wall:** Resistência Psicológica.
-    * **Put Wall:** Suporte Principal.
+    ### 🚦 Indicadores de Topo (Métricas)
+    
+    * **Net GEX (Exposição Líquida):** É a soma de todo o Gama do mercado. 
+        * **Verde (Positivo):** Indica que o mercado está "protegido". Os Market Makers tendem a segurar a volatilidade.
+        * **Vermelho (Negativo):** Indica que o mercado está "desprotegido". O risco de quedas rápidas e vácuos de liquidez é alto.
+        
+    * **Zero Gamma (O Pivô):** É a linha divisória do dia. 
+        * Se o preço está **acima**, você está em águas calmas.
+        * Se o preço está **abaixo**, você está em águas perigosas (Zona de Expansão).
+        
+    * **Call Wall & Put Wall:** * **Call Wall:** O "teto" onde a resistência é máxima. Raramente o preço rompe este nível sem um evento muito forte.
+        * **Put Wall:** O "chão" técnico. Se o preço cair abaixo disso, o pânico pode acelerar pois os Market Makers precisam vender agressivamente para se proteger.
+
     ---
-    ### 📊 Como ler o Histograma?
-    * **Barras Verdes (Calls):** Estabilização.
-    * **Barras Vermelhas (Puts):** Pressão de venda (Hedge).
-    * **Força %:** Peso do strike no mercado.
+
+    ### 📊 O Gráfico de Barras (Histograma)
+    
+    * **Barras Verdes (Calls):** Mostram onde os investidores estão otimistas. Quanto maior a barra, mais forte aquele strike atua como um "ímã" que impede o preço de disparar descontroladamente (Resistência).
+    * **Barras Vermelhas (Puts):** Mostram onde está a proteção contra quedas. Se as barras de Puts forem muito maiores que as de Calls, a pressão vendedora no dia é dominante.
+    * **Força %:** No hover (ao passar o mouse), você vê o peso de cada strike. Strikes com força > 10% dominam a movimentação do dia.
+
     ---
-    ### 🚦 Cenários de Trading
-    * **Supressão (Preço > Zero):** Range lento.
-    * **Expansão (Preço < Zero):** Movimentos explosivos.
+
+    ### 🗺️ Definição dos Cenários
+    
+    * **Cenário de SUPRESSÃO (Preço > Zero Gamma):** * Os Market Makers compram quando cai e vendem quando sobe. 
+        * **O que esperar:** Movimentos lentos, reversão à média, dias de "range" lateral. É o cenário ideal para quem vende opções ou faz operações de tiro curto.
+        
+    * **Cenário de EXPANSÃO (Preço < Zero Gamma):** * Os Market Makers vendem quando cai e compram quando sobe (Hedge Dinâmico). Isso "alimenta" o movimento do preço.
+        * **O que esperar:** Volatilidade alta, tendências fortes de queda, movimentos bruscos. É aqui que ocorrem os "Flash Crashes".
+
+    ---
+    *Dica: Se o Preço Atual estiver exatamente sobre o Zero Gamma, o mercado está em um momento de decisão. O lado que vencer (rompimento para cima ou para baixo) ditará a direção das próximas horas.*
     """)
 
-st.caption("Dados baseados no modelo Black-Scholes. Atualização em tempo real via Yahoo Finance.")
+st.caption("Dados baseados no modelo Black-Scholes. Atualização via Yahoo Finance. Use para fins educacionais.")
