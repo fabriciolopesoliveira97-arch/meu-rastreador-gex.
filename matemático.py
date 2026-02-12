@@ -38,7 +38,6 @@ def get_gamma_data_v2(ticker_symbol):
         T = max((d_exp - datetime.now()).days + 1, 1) / 365.0
         r = 0.045 
 
-        # Filtro de precisão para evitar o erro do Zero Gamma em strikes mortos
         margin = 0.10 
         calls = options.calls[(options.calls['strike'] > S*(1-margin)) & (options.calls['strike'] < S*(1+margin)) & (options.calls['openInterest'] > 10)].copy()
         puts = options.puts[(options.puts['strike'] > S*(1-margin)) & (options.puts['strike'] < S*(1+margin)) & (options.puts['openInterest'] > 10)].copy()
@@ -52,12 +51,9 @@ def get_gamma_data_v2(ticker_symbol):
 
 def get_gamma_levels(calls, puts, S):
     if calls.empty or puts.empty: return {"zero": 0, "put": 0, "call": 0}
-    
-    # Walls baseadas no maior GEX absoluto
     call_wall = calls.loc[calls['GEX'].idxmax(), 'strike']
     put_wall = puts.loc[puts['GEX'].abs().idxmax(), 'strike']
     
-    # Zero Gamma por cruzamento de sinal perto do Spot
     df_total = pd.concat([calls[['strike', 'GEX']], puts[['strike', 'GEX']]])
     df_net = df_total.groupby('strike')['GEX'].sum().reset_index().sort_values('strike')
     df_prox = df_net[(df_net['strike'] > S * 0.95) & (df_net['strike'] < S * 1.05)]
@@ -73,12 +69,17 @@ calls_data, puts_data, current_price, df_price = get_gamma_data_v2(ticker_symbol
 
 if not calls_data.empty and not puts_data.empty:
     levels = get_gamma_levels(calls_data, puts_data, current_price)
+    
+    # Cálculo de Força em Porcentagem
+    total_abs_gex = calls_data['GEX'].sum() + puts_data['GEX'].abs().sum()
+    calls_data['Força'] = (calls_data['GEX'] / total_abs_gex * 100).round(2)
+    puts_data['Força'] = (puts_data['GEX'].abs() / total_abs_gex * 100).round(2)
+    
     net_gex_total = (calls_data['GEX'].sum() + puts_data['GEX'].sum()) / 10**6
     
-    # ALERTAS DE RISCO (Conforme imagens enviadas)
+    # ALERTAS
     if current_price < levels['put']:
         st.error(f"⚠️ ABAIXO DO SUPORTE: Preço furou a Put Wall (${levels['put']})")
-    
     if current_price < levels['zero']:
         st.warning("🔥 RISCO: GAMA NEGATIVO (Movimentos Explosivos)")
     else:
@@ -92,29 +93,36 @@ if not calls_data.empty and not puts_data.empty:
     c4.metric("Put Wall", f"${levels['put']}")
     c5.metric("Call Wall", f"${levels['call']}")
 
-    # CENÁRIO ATUAL
-    cenario = "SUPRESSÃO" if current_price > levels['zero'] else "EXPANSÃO"
-    cor_cenario = "#00ffcc" if cenario == "SUPRESSÃO" else "#ff4b4b"
-    st.markdown(f"### Cenário Atual: <span style='color:{cor_cenario}'>{cenario}</span>", unsafe_allow_html=True)
+    st.markdown(f"### Cenário Atual: **{'SUPRESSÃO' if current_price > levels['zero'] else 'EXPANSÃO'}**")
 
-    # HISTOGRAMA DE GAMMA
-    st.subheader("📊 Histograma de Gamma Exposure")
+    # HISTOGRAMA COM PORCENTAGEM NO HOVER
+    st.subheader("📊 Histograma de Gamma Exposure (Força por Strike)")
     fig_hist = go.Figure()
-    fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls', marker_color='#00ffcc'))
-    fig_hist.add_trace(go.Bar(x=puts_data['strike'], y=puts_data['GEX'], name='Puts', marker_color='#ff4b4b'))
+    
+    # Adicionando Calls com Hover Customizado
+    fig_hist.add_trace(go.Bar(
+        x=calls_data['strike'], y=calls_data['GEX'], name='Calls', marker_color='#00ffcc',
+        hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>",
+        customdata=calls_data['Força']
+    ))
+    
+    # Adicionando Puts com Hover Customizado
+    fig_hist.add_trace(go.Bar(
+        x=puts_data['strike'], y=puts_data['GEX'], name='Puts', marker_color='#ff4b4b',
+        hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>",
+        customdata=puts_data['Força']
+    ))
+
     fig_hist.add_vline(x=current_price, line_dash="dash", line_color="white", annotation_text=f"SPOT: ${current_price:.2f}")
-    fig_hist.update_layout(template="plotly_dark", barmode='relative', height=350)
+    fig_hist.update_layout(template="plotly_dark", barmode='relative', height=350, hovermode="x unified")
     st.plotly_chart(fig_hist, use_container_width=True)
 
-    # GRÁFICO DE VELAS (Restaurado com Call e Put Walls)
+    # GRÁFICO DE VELAS
     fig_candle = go.Figure(data=[go.Candlestick(x=df_price.index, open=df_price['Open'], high=df_price['High'], low=df_price['Low'], close=df_price['Close'], name="Preço")])
-    
-    # Linhas de Níveis restauradas
     fig_candle.add_hline(y=levels['zero'], line_dash="dash", line_color="yellow", annotation_text="ZERO GAMMA")
     fig_candle.add_hline(y=levels['put'], line_color="green", line_width=2, annotation_text="PUT WALL")
     fig_candle.add_hline(y=levels['call'], line_color="red", line_width=2, annotation_text="CALL WALL")
-    
-    fig_candle.update_layout(template="plotly_dark", height=500, xaxis_rangeslider_visible=False)
+    fig_candle.update_layout(template="plotly_dark", height=450, xaxis_rangeslider_visible=False)
     st.plotly_chart(fig_candle, use_container_width=True)
 
 else:
