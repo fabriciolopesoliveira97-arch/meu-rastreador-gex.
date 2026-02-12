@@ -23,33 +23,51 @@ def calculate_gamma(S, K, T, r, sigma):
     gamma = norm.pdf(d1) / (S * sigma * np.sqrt(T))
     return gamma
 
-# --- 3. BUSCA DE DADOS (CORRIGIDA) ---
-@st.cache_data(ttl=30) # Cache reduzido para 30 segundos para ser "quase" real-time
+# --- 3. FUNÇÕES DE DADOS ---
+@st.cache_data(ttl=300)
 def get_gamma_data_v2(ticker_symbol):
     try:
         tk = yf.Ticker(ticker_symbol)
-        # Puxa o preço atual exato (Price Action)
-        df_hist = tk.history(period="1d", interval="1m")
+        df_hist = tk.history(period="1d", interval="5m")
+        
+        if df_hist.empty:
+            df_hist = tk.history(period="1d")
+        
         if df_hist.empty:
             return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame()
             
         S = df_hist['Close'].iloc[-1]
         
-        # Seleciona o vencimento mais próximo (Geralmente 0DTE para QQQ)
-        S = df_hist['Close'].iloc[-1]
-        
-        # AQUI COMEÇA O CÓDIGO NOVO (Alinhado com o S acima)
-        hoje = datetime.now().strftime('%Y-%m-%d')
-        vencimentos_validos = [d for d in tk.options if d >= hoje]
-        
-        if not vencimentos_validos:
+        # Pega as datas de vencimento disponíveis
+        vencimentos = tk.options
+        if not vencimentos:
             return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame()
             
-        expiry_date = vencimentos_validos[0]
+        expiry_date = vencimentos[0]
         options = tk.option_chain(expiry_date)
+        
+        d_exp = datetime.strptime(expiry_date, '%Y-%m-%d')
+        d_now = datetime.now()
+        days_to_expiry = (d_exp - d_now).days + 1
+        T = max(days_to_expiry, 1) / 365.0
+        r = 0.045 
 
+        calls = options.calls[['strike', 'openInterest', 'impliedVolatility', 'lastPrice']].copy()
+        puts = options.puts[['strike', 'openInterest', 'impliedVolatility', 'lastPrice']].copy()
 
-expiry_date = vencimentos_validos[0]
+        # Cálculo da Gamma Pura e GEX (Modelo Black-Scholes)
+        calls['Gamma_Puro'] = calls.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']), axis=1)
+        puts['Gamma_Puro'] = puts.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']), axis=1)
+
+        calls['GEX'] = calls['Gamma_Puro'] * calls['openInterest'] * 100 * S**2 * 0.01
+        puts['GEX'] = puts['Gamma_Puro'] * puts['openInterest'] * 100 * S**2 * 0.01 * -1
+        
+        return calls, puts, S, df_hist
+
+    except Exception as e:
+        st.error(f"Erro no processamento: {e}")
+        return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame()
+
 
         options = tk.option_chain(expiry_date)
         
