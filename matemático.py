@@ -136,3 +136,32 @@ if not calls_data.empty and not puts_data.empty:
 
 else:
     st.warning("Aguardando dados... Verifique se o mercado está aberto.")
+# --- 5. GUIA DE OPERAÇÃO E GLOSSÁRIO (Adicione ao final do arquivo) ---
+st.divider()
+with st.expander("📖 Guia de Leitura - Como interpretar o GEX PRO"):
+    st.markdown("""
+    ### 🛡️ O que significam os níveis?
+    
+    * **Zero Gamma:** É o "Pivô" do mercado. 
+        * **Acima dele (Gama Positivo):** O mercado entra em **Supressão de Volatilidade**. Os Market Makers tendem a comprar quedas e vender altas, segurando o preço em um range (Cenário de Consolidação).
+        * **Abaixo dele (Gama Negativo):** O mercado entra em **Zona de Expansão**. Os Market Makers precisam vender conforme o preço cai, acelerando as quedas e aumentando a volatilidade (Cenário de Pânico ou Movimentos Rápidos).
+        
+    * **Call Wall (Muro de Calls):** O nível de strike com a maior concentração de Gama Positivo. Funciona como uma **Resistência Psicológica** fortíssima. É onde os investidores param de comprar.
+    
+    * **Put Wall (Muro de Puts):** O nível de strike com a maior concentração de Gama Negativo. Funciona como o **Suporte Principal**. Se este nível for rompido, o mercado pode "derreter" rapidamente.
+
+    ---
+
+    ### 📊 Como ler o Histograma?
+    * **Barras Verdes (Calls):** Representam a força dos compradores e a estabilização do preço.
+    * **Barras Vermelhas (Puts):** Representam a pressão de venda e proteção (Hedge).
+    * **Força %:** Indica o peso que aquele strike específico tem sobre todo o mercado de opções do dia. Quanto maior a %, mais o preço sentirá "atração" ou "repulsão" por aquele nível.
+
+    ---
+
+    ### 🚦 Cenários de Trading
+    * **Cenário de Supressão:** Preço > Zero Gamma. Ideal para operações de *Range* ou venda de volatilidade. O preço tende a ser "lento".
+    * **Cenário de Expansão:** Preço < Zero Gamma. Ideal para operações de *Momentum* ou compra de volatilidade. Movimentos explosivos são esperados aqui.
+    """)
+
+st.caption("Dados baseados no modelo Black-Scholes. Atualização em tempo real via Yahoo Finance.")
