@@ -43,6 +43,7 @@ def get_gamma_data_v2(ticker_symbol):
         if not vencimentos:
             return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame()
             
+        # (Adicione 4 espaços no início de cada linha abaixo se colar manualmente)
         expiry_date = vencimentos[0]
         options = tk.option_chain(expiry_date)
         
@@ -52,15 +53,19 @@ def get_gamma_data_v2(ticker_symbol):
         T = max(days_to_expiry, 1) / 365.0
         r = 0.045 
 
-        calls = options.calls[['strike', 'openInterest', 'impliedVolatility', 'lastPrice']].copy()
-        puts = options.puts[['strike', 'openInterest', 'impliedVolatility', 'lastPrice']].copy()
+        # FILTRO DE SEGURANÇA: Pega apenas strikes próximos ao preço atual (Spot)
+        # Isso evita que strikes mortos em 700+ distorçam o seu cálculo
+        margin = 0.15  # Filtra 15% para cima e para baixo
+        calls = options.calls[(options.calls['strike'] > S * (1-margin)) & (options.calls['strike'] < S * (1+margin))].copy()
+        puts = options.puts[(options.puts['strike'] > S * (1-margin)) & (options.puts['strike'] < S * (1+margin))].copy()
 
-        # Cálculo da Gamma Pura e GEX (Modelo Black-Scholes)
+        # Cálculo da Gamma Pura e GEX
         calls['Gamma_Puro'] = calls.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']), axis=1)
         puts['Gamma_Puro'] = puts.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']), axis=1)
 
         calls['GEX'] = calls['Gamma_Puro'] * calls['openInterest'] * 100 * S**2 * 0.01
         puts['GEX'] = puts['Gamma_Puro'] * puts['openInterest'] * 100 * S**2 * 0.01 * -1
+
         
         return calls, puts, S, df_hist
 
