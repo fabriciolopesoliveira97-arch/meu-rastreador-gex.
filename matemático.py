@@ -93,22 +93,6 @@ def get_gamma_data_v2(ticker_symbol):
     c4.metric("Put Wall", f"${levels['put']}")
     c5.metric("Call Wall", f"${levels['call']}")
 
-        return calls, puts, S, df_hist
-
-    except Exception as e:
-        st.error(f"Erro no processamento: {e}")
-        return pd.DataFrame(), pd.DataFrame(), 0, pd.DataFrame()
-
-
-        options = tk.option_chain(expiry_date)
-        
-        d_exp = datetime.strptime(expiry_date, '%Y-%m-%d')
-        T = max((d_exp - datetime.now()).days, 0.5) / 365.0
-        r = 0.045 
-
-        calls = options.calls[['strike', 'openInterest', 'impliedVolatility']].copy()
-        puts = options.puts[['strike', 'openInterest', 'impliedVolatility']].copy()
-
         # Limpeza de dados (IV zero quebra o cálculo)
         calls = calls[calls['impliedVolatility'] > 0.001]
         puts = puts[puts['impliedVolatility'] > 0.001]
