@@ -38,9 +38,10 @@ def get_gamma_data_v2(ticker_symbol):
         T = max((d_exp - datetime.now()).days + 1, 1) / 365.0
         r = 0.045 
 
-        margin = 0.10 
-        calls = options.calls[(options.calls['strike'] > S*(1-margin)) & (options.calls['strike'] < S*(1+margin)) & (options.calls['openInterest'] > 10)].copy()
-        puts = options.puts[(options.puts['strike'] > S*(1-margin)) & (options.puts['strike'] < S*(1+margin)) & (options.puts['openInterest'] > 10)].copy()
+        # Filtro de liquidez e margem
+        margin = 0.15 
+        calls = options.calls[(options.calls['strike'] > S*(1-margin)) & (options.calls['strike'] < S*(1+margin)) & (options.calls['openInterest'] > 5)].copy()
+        puts = options.puts[(options.puts['strike'] > S*(1-margin)) & (options.puts['strike'] < S*(1+margin)) & (options.puts['openInterest'] > 5)].copy()
 
         calls['GEX'] = calls.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']) * x['openInterest'] * 100 * S**2 * 0.01, axis=1)
         puts['GEX'] = puts.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']) * x['openInterest'] * 100 * S**2 * 0.01 * -1, axis=1)
@@ -58,22 +59,23 @@ def get_gamma_levels(calls, puts, S):
     df_total = pd.concat([calls[['strike', 'GEX']], puts[['strike', 'GEX']]])
     df_net = df_total.groupby('strike')['GEX'].sum().reset_index().sort_values('strike')
     
-    # AJUSTE FINO: Filtra strikes próximos para evitar saltos bruscos
-    df_prox = df_net[(df_net['strike'] >= S * 0.98) & (df_net['strike'] <= S * 1.02)]
+    # --- LOGICA "ANTI-603" (Foco Total no Spot) ---
+    # Pegamos apenas os strikes vizinhos ao preço atual
+    df_vizinhos = df_net[(df_net['strike'] >= S - 10) & (df_net['strike'] <= S + 10)]
     
-    # Encontra o cruzamento com interpolação para precisão máxima
-    zero_gamma = S # Fallback inicial
-    for i in range(len(df_prox) - 1):
-        if (df_prox.iloc[i]['GEX'] * df_prox.iloc[i+1]['GEX']) < 0:
-            # Interpolação linear simples para achar o zero exato
-            s1, g1 = df_prox.iloc[i]['strike'], df_prox.iloc[i]['GEX']
-            s2, g2 = df_prox.iloc[i+1]['strike'], df_prox.iloc[i+1]['GEX']
-            zero_gamma = s1 - g1 * (s2 - s1) / (g2 - g1)
-            break
+    # Se não houver cruzamento nos vizinhos, tentamos achar o mais próximo do zero na zona do preço
+    df_vizinhos['prev_GEX'] = df_vizinhos['GEX'].shift(1)
+    crossing = df_vizinhos[((df_vizinhos['GEX'] > 0) & (df_vizinhos['prev_GEX'] < 0)) | 
+                           ((df_vizinhos['GEX'] < 0) & (df_vizinhos['prev_GEX'] > 0))]
     
-    # Se não houver cruzamento claro, usa o strike de menor GEX absoluto na vizinhança
-    if zero_gamma == S:
-        zero_gamma = df_prox.iloc[(df_prox['GEX']).abs().argsort()[:1]]['strike'].values[0]
+    if not crossing.empty:
+        # Interpolação para precisão cirúrgica
+        s1, g1 = crossing.iloc[0]['strike'] - (crossing.iloc[0]['strike'] - df_vizinhos.loc[crossing.index[0]-1, 'strike']), df_vizinhos.loc[crossing.index[0]-1, 'GEX']
+        s2, g2 = crossing.iloc[0]['strike'], crossing.iloc[0]['GEX']
+        zero_gamma = s1 - g1 * (s2 - s1) / (g2 - g1)
+    else:
+        # Fallback: O strike com menor GEX absoluto dentro da zona de preço atual
+        zero_gamma = df_vizinhos.iloc[(df_vizinhos['GEX']).abs().argsort()[:1]]['strike'].values[0]
         
     return {"zero": round(zero_gamma, 2), "put": put_wall, "call": call_wall}
 
@@ -84,29 +86,32 @@ calls_data, puts_data, current_price, df_price = get_gamma_data_v2(ticker_symbol
 if not calls_data.empty and not puts_data.empty:
     levels = get_gamma_levels(calls_data, puts_data, current_price)
     
+    # Cálculo de Força % para o Histograma
     total_abs_gex = calls_data['GEX'].sum() + puts_data['GEX'].abs().sum()
     calls_data['Força'] = (calls_data['GEX'] / total_abs_gex * 100).round(2)
     puts_data['Força'] = (puts_data['GEX'].abs() / total_abs_gex * 100).round(2)
+    
     net_gex_total = (calls_data['GEX'].sum() + puts_data['GEX'].sum()) / 10**6
     
-    # ALERTAS
+    # ALERTAS VISUAIS
     if current_price < levels['put']:
-        st.error(f"⚠️ ABAIXO DO SUPORTE: Preço furou a Put Wall (${levels['put']})")
+        st.error(f"⚠️ PUT WALL ROMPIDA: Preço abaixo do suporte principal (${levels['put']})")
+    
     if current_price < levels['zero']:
-        st.warning(f"🔥 RISCO: GAMA NEGATIVO - Pivô: ${levels['zero']}")
+        st.warning(f"🔥 ZONA DE EXPANSÃO (GEX NEGATIVO) - Pivô: ${levels['zero']}")
     else:
-        st.success(f"✅ ESTABILIDADE: GAMA POSITIVO - Pivô: ${levels['zero']}")
+        st.success(f"🛡️ ZONA DE SUPRESSÃO (GEX POSITIVO) - Pivô: ${levels['zero']}")
 
     # MÉTRICAS
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Preço Atual", f"${current_price:.2f}")
-    c2.metric("Net GEX", f"{net_gex_total:.2f}M", delta="Bullish" if net_gex_total > 0 else "Bearish")
+    c2.metric("Net GEX", f"{net_gex_total:.2f}M")
     c3.metric("Zero Gamma", f"${levels['zero']}")
     c4.metric("Put Wall", f"${levels['put']}")
     c5.metric("Call Wall", f"${levels['call']}")
 
-    # HISTOGRAMA COM PORCENTAGEM (HOVER)
-    st.subheader("📊 Histograma de Gamma Exposure (Força %)")
+    # HISTOGRAMA DE FORÇA
+    st.subheader("📊 Distribuição de Exposição Institucional (GEX)")
     fig_hist = go.Figure()
     fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls', marker_color='#00ffcc',
                              hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>",
@@ -114,11 +119,11 @@ if not calls_data.empty and not puts_data.empty:
     fig_hist.add_trace(go.Bar(x=puts_data['strike'], y=puts_data['GEX'], name='Puts', marker_color='#ff4b4b',
                              hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>",
                              customdata=puts_data['Força']))
-    fig_hist.add_vline(x=current_price, line_dash="dash", line_color="white", annotation_text=f"SPOT: ${current_price:.2f}")
+    fig_hist.add_vline(x=current_price, line_dash="dash", line_color="white", annotation_text=f"PREÇO: ${current_price:.2f}")
     fig_hist.update_layout(template="plotly_dark", barmode='relative', height=350, hovermode="x unified")
     st.plotly_chart(fig_hist, use_container_width=True)
 
-    # GRÁFICO CANDLESTICK
+    # GRÁFICO DE VELAS
     fig_candle = go.Figure(data=[go.Candlestick(x=df_price.index, open=df_price['Open'], high=df_price['High'], low=df_price['Low'], close=df_price['Close'], name="Preço")])
     fig_candle.add_hline(y=levels['zero'], line_dash="dash", line_color="yellow", annotation_text="ZERO GAMMA")
     fig_candle.add_hline(y=levels['put'], line_color="green", line_width=2, annotation_text="PUT WALL")
@@ -127,4 +132,4 @@ if not calls_data.empty and not puts_data.empty:
     st.plotly_chart(fig_candle, use_container_width=True)
 
 else:
-    st.warning("Aguardando dados... Verifique se o mercado está aberto.")
+    st.warning("Mercado fechado ou sem dados de opções para este ticker.")
