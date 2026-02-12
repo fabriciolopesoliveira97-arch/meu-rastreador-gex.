@@ -38,6 +38,7 @@ def get_gamma_data_v2(ticker_symbol):
         T = max((d_exp - datetime.now()).days + 1, 1) / 365.0
         r = 0.045 
 
+        # Filtro de margem para focar no que importa
         margin = 0.10 
         calls = options.calls[(options.calls['strike'] > S*(1-margin)) & (options.calls['strike'] < S*(1+margin)) & (options.calls['openInterest'] > 20)].copy()
         puts = options.puts[(options.puts['strike'] > S*(1-margin)) & (options.puts['strike'] < S*(1+margin)) & (options.puts['openInterest'] > 20)].copy()
@@ -52,16 +53,21 @@ def get_gamma_data_v2(ticker_symbol):
 def get_gamma_levels(calls, puts, S):
     if calls.empty or puts.empty: return {"zero": 0, "put": 0, "call": 0}
     
+    # Walls
     call_wall = calls.loc[calls['GEX'].idxmax(), 'strike']
     put_wall = puts.loc[puts['GEX'].abs().idxmax(), 'strike']
     
+    # --- NOVA LÓGICA ZERO GAMMA (ANTIDISTORÇÃO) ---
     df_total = pd.concat([calls[['strike', 'GEX']], puts[['strike', 'GEX']]])
     df_net = df_total.groupby('strike')['GEX'].sum().reset_index().sort_values('strike')
     
+    # 1. Primeiro, ignoramos strikes que estão muito longe do preço atual (Spot)
     df_prox = df_net[(df_net['strike'] >= S - 5) & (df_net['strike'] <= S + 5)]
-    if df_prox.empty:
+    
+    if df_prox.empty: # Se a margem for muito pequena, abre um pouco
         df_prox = df_net[(df_net['strike'] >= S * 0.95) & (df_net['strike'] <= S * 1.05)]
 
+    # 2. Procuramos onde o valor cruza o zero (inversão de sinal)
     df_prox['prev_GEX'] = df_prox['GEX'].shift(1)
     crossing = df_prox[((df_prox['GEX'] > 0) & (df_prox['prev_GEX'] < 0)) | 
                        ((df_prox['GEX'] < 0) & (df_prox['prev_GEX'] > 0))]
@@ -69,6 +75,7 @@ def get_gamma_levels(calls, puts, S):
     if not crossing.empty:
         zero_gamma = crossing.iloc[0]['strike']
     else:
+        # 3. Se não houver cruzamento, pegamos o strike mais próximo do preço atual (Spot)
         zero_gamma = df_prox.iloc[(df_prox['GEX']).abs().argsort()[:1]]['strike'].values[0]
         
     return {"zero": zero_gamma, "put": put_wall, "call": call_wall}
@@ -80,6 +87,7 @@ calls_data, puts_data, current_price, df_price = get_gamma_data_v2(ticker_symbol
 if not calls_data.empty and not puts_data.empty:
     levels = get_gamma_levels(calls_data, puts_data, current_price)
     
+    # Força em %
     total_abs_gex = calls_data['GEX'].sum() + puts_data['GEX'].abs().sum()
     calls_data['Força'] = (calls_data['GEX'] / total_abs_gex * 100).round(2)
     puts_data['Força'] = (puts_data['GEX'].abs() / total_abs_gex * 100).round(2)
@@ -94,25 +102,22 @@ if not calls_data.empty and not puts_data.empty:
     else:
         st.success(f"✅ ESTABILIDADE: GAMA POSITIVO - Pivô: ${levels['zero']}")
 
-    # --- MÉTRICAS COM LÓGICA DE COR PARA NET GEX ---
+    # MÉTRICAS (Com correção de cor solicitada)
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Preço Atual", f"${current_price:.2f}")
-    
-    # Se net_gex_total for positivo, delta é "Normal" (verde). Se negativo, "Inverse" (vermelho).
     c2.metric(
-        label="Net GEX", 
-        value=f"{net_gex_total:.2f}M", 
-        delta=f"{'Positivo' if net_gex_total > 0 else 'Negativo'}",
+        "Net GEX", 
+        f"{net_gex_total:.2f}M", 
+        delta="Positivo" if net_gex_total > 0 else "Negativo",
         delta_color="normal" if net_gex_total > 0 else "inverse"
     )
-    
     c3.metric("Zero Gamma", f"${levels['zero']}")
     c4.metric("Put Wall", f"${levels['put']}")
     c5.metric("Call Wall", f"${levels['call']}")
 
     st.markdown(f"### Cenário Atual: **{'SUPRESSÃO' if current_price > levels['zero'] else 'EXPANSÃO'}**")
 
-    # HISTOGRAMA
+    # HISTOGRAMA COM PORCENTAGEM (HOVER)
     fig_hist = go.Figure()
     fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls', marker_color='#00ffcc',
                              hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>",
@@ -124,7 +129,7 @@ if not calls_data.empty and not puts_data.empty:
     fig_hist.update_layout(template="plotly_dark", barmode='relative', height=350, hovermode="x unified")
     st.plotly_chart(fig_hist, use_container_width=True)
 
-    # GRÁFICO DE VELAS
+    # GRÁFICO DE VELAS COM TODAS AS LINHAS
     fig_candle = go.Figure(data=[go.Candlestick(x=df_price.index, open=df_price['Open'], high=df_price['High'], low=df_price['Low'], close=df_price['Close'], name="Preço")])
     fig_candle.add_hline(y=levels['zero'], line_dash="dash", line_color="yellow", annotation_text="ZERO GAMMA")
     fig_candle.add_hline(y=levels['put'], line_color="green", line_width=2, annotation_text="PUT WALL")
@@ -135,13 +140,32 @@ if not calls_data.empty and not puts_data.empty:
 else:
     st.warning("Aguardando dados... Verifique se o mercado está aberto.")
 
+# --- 5. GUIA DE OPERAÇÃO E GLOSSÁRIO (RESTITUÍDO INTEGRALMENTE) ---
 st.divider()
 with st.expander("📖 Guia de Leitura - Como interpretar o GEX PRO"):
     st.markdown("""
     ### 🛡️ O que significam os níveis?
-    * **Zero Gamma:** Pivô de volatilidade. Acima = Estabilidade. Abaixo = Aceleração.
-    * **Call Wall:** Resistência principal.
-    * **Put Wall:** Suporte principal. Rompimento aqui gera quedas rápidas.
+    
+    * **Zero Gamma:** É o "Pivô" do mercado. 
+        * **Acima dele (Gama Positivo):** O mercado entra em **Supressão de Volatilidade**. Os Market Makers tendem a comprar quedas e vender altas, segurando o preço em um range (Cenário de Consolidação).
+        * **Abaixo dele (Gama Negativo):** O mercado entra em **Zona de Expansão**. Os Market Makers precisam vender conforme o preço cai, acelerando as quedas e aumentando a volatilidade (Cenário de Pânico ou Movimentos Rápidos).
+        
+    * **Call Wall (Muro de Calls):** O nível de strike com a maior concentração de Gama Positivo. Funciona como uma **Resistência Psicológica** fortíssima. É onde os investidores param de comprar.
+    
+    * **Put Wall (Muro de Puts):** O nível de strike com a maior concentração de Gama Negativo. Funciona como o **Suporte Principal**. Se este nível for rompido, o mercado pode "derreter" rapidamente.
+
+    ---
+
+    ### 📊 Como ler o Histograma?
+    * **Barras Verdes (Calls):** Representam a força dos compradores e a estabilização do preço.
+    * **Barras Vermelhas (Puts):** Representam a pressão de venda e proteção (Hedge).
+    * **Força %:** Indica o peso que aquele strike específico tem sobre todo o mercado de opções do dia. Quanto maior a %, mais o preço sentirá "atração" ou "repulsão" por aquele nível.
+
+    ---
+
+    ### 🚦 Cenários de Trading
+    * **Cenário de Supressão:** Preço > Zero Gamma. Ideal para operações de *Range* ou venda de volatilidade. O preço tende a ser "lento".
+    * **Cenário de Expansão:** Preço < Zero Gamma. Ideal para operações de *Momentum* ou compra de volatilidade. Movimentos explosivos são esperados aqui.
     """)
 
 st.caption("Dados baseados no modelo Black-Scholes. Atualização em tempo real via Yahoo Finance.")
