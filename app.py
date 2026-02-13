@@ -115,9 +115,8 @@ if not calls_data.empty and not puts_data.empty:
     c4.metric("Put Wall", f"${levels['put']}")
     c5.metric("Call Wall", f"${levels['call']}")
 
-    # --- NOVO BLOCO: ANÁLISE DE PROBABILIDADE ---
+    # --- INÍCIO DO BLOCO ADICIONADO ---
     st.divider()
-    
     if net_gex_total > 0 and current_price > levels['zero']:
         prob_desc = "ALTA (Estabilidade)"
         sentimento = "Os Market Makers estão provendo suporte. O cenário favorece a continuidade da alta ou lateralização (baixa volatilidade)."
@@ -140,7 +139,7 @@ if not calls_data.empty and not puts_data.empty:
     elif cor_alerta == "error": st.error(f"**Direção Provável:** {prob_desc}\n\n{sentimento}")
     elif cor_alerta == "warning": st.warning(f"**Direção Provável:** {prob_desc}\n\n{sentimento}")
     else: st.info(f"**Direção Provável:** {prob_desc}\n\n{sentimento}")
-    # --- FIM DO NOVO BLOCO ---
+    # --- FIM DO BLOCO ADICIONADO ---
 
     st.markdown(f"### Cenário Atual: **{'SUPRESSÃO' if current_price > levels['zero'] else 'EXPANSÃO'}**")
 
