@@ -153,29 +153,13 @@ if not calls_data.empty and not puts_data.empty:
         # 1. Maiores Mudanças de GEX
         st.subheader("Maiores Mudanças de GEX")
         all_data = pd.concat([calls_data[['strike', 'GEX']], puts_data[['strike', 'GEX']]])
-        changes = all_data.groupby('strike')['GEX'].sum().sort_values(key=abs, ascending=False).head(10)
+        changes = all_data.groupby('strike')['GEX'].sum().sort_values(key=abs, ascending=False).head(15)
         
         for strike, val in changes.items():
             color = "#00ffcc" if val > 0 else "#ff4b4b"
             col_s1, col_s2 = st.columns([1, 1])
             col_s1.write(f"**${strike:.2f}**")
             col_s2.markdown(f"<span style='color:{color}'>{val/10**6:,.2f}M</span>", unsafe_allow_html=True)
-        
-        st.divider()
-
-        # 2. Calendário Econômico
-        st.subheader("📅 Calendário Econômico")
-        st.caption("13 de Fevereiro")
-        cal_data = [
-            {"hora": "10:30", "evento": "Core CPI MM", "prev": "0,3%"},
-            {"hora": "10:30", "evento": "Core CPI YY", "prev": "2,5%"},
-            {"hora": "10:30", "evento": "CPI MM, SA", "prev": "0,2%"}
-        ]
-        for item in cal_data:
-            c_h, c_e, c_p = st.columns([1, 2, 1])
-            c_h.write(item['hora'])
-            c_e.write(item['evento'])
-            c_p.write(item['prev'])
 
 else:
     st.warning("Aguardando dados... Verifique se o mercado está aberto.")
