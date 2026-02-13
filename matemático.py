@@ -80,6 +80,43 @@ def get_gamma_levels(calls, puts, S):
         
     return {"zero": zero_gamma, "put": put_wall, "call": call_wall}
 
+# --- NOVA FUNÇÃO: OPTIONS INVENTORY ---
+def render_options_inventory(calls_df, puts_df, current_price):
+    st.markdown("---")
+    st.subheader("📊 Options Inventory (Professional GEX Profile)")
+    
+    df_inv = pd.concat([calls_df, puts_df]).sort_values('strike')
+    fig_inv = go.Figure()
+
+    fig_inv.add_trace(go.Bar(
+        y=df_inv['strike'],
+        x=df_inv['GEX'],
+        orientation='h',
+        marker_color=np.where(df_inv['GEX'] > 0, '#00ffcc', '#ff4b4b'),
+        name='Exposição Gamma',
+        hovertemplate="Strike: %{y}<br>GEX: %{x:,.0f}<extra></extra>"
+    ))
+
+    fig_inv.add_hline(
+        y=current_price, 
+        line_dash="dot", 
+        line_color="yellow", 
+        line_width=2,
+        annotation_text=f"SPOT: {current_price:.2f}",
+        annotation_position="top right"
+    )
+
+    fig_inv.update_layout(
+        template="plotly_dark",
+        height=800,
+        xaxis_title="← VENDA (Short Gamma) | COMPRA (Long Gamma) →",
+        yaxis_title="Strike Price ($)",
+        hovermode="y unified",
+        xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.05)'),
+        yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.05)', dtick=1)
+    )
+    st.plotly_chart(fig_inv, use_container_width=True)
+
 # --- 4. INTERFACE ---
 st.title("GEX PRO - Real Time")
 ticker_symbol = st.sidebar.text_input("Ticker", value="QQQ").upper()
@@ -89,7 +126,7 @@ if current_expiry:
     fuso_br = pytz.timezone('America/Sao_Paulo')
     agora = datetime.now(fuso_br)
     now_time = agora.strftime("%H:%M:%S")
-    now_date = agora.strftime("%d/%m/%Y") # Força a exibição do dia correto (12/02)
+    now_date = agora.strftime("%d/%m/%Y") 
     st.info(f"🕒 **Atualizado em:** {now_date} às {now_time} | 📅 **Vencimento:** {current_expiry} | 🔍 **Ticker:** {ticker_symbol}")
 
 if not calls_data.empty and not puts_data.empty:
@@ -120,6 +157,7 @@ if not calls_data.empty and not puts_data.empty:
     col_main, col_side = st.columns([7, 3])
 
     with col_main:
+        # 1. Histograma Original
         fig_hist = go.Figure()
         fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls', marker_color='#00ffcc', hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>", customdata=calls_data['Força']))
         fig_hist.add_trace(go.Bar(x=puts_data['strike'], y=puts_data['GEX'], name='Puts', marker_color='#ff4b4b', hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>", customdata=puts_data['Força']))
@@ -130,12 +168,16 @@ if not calls_data.empty and not puts_data.empty:
         fig_hist.update_layout(template="plotly_dark", barmode='relative', height=350, hovermode="x unified", yaxis=dict(range=[-limit_y, limit_y]), margin=dict(t=10, b=10))
         st.plotly_chart(fig_hist, use_container_width=True)
 
+        # 2. Candlestick Original
         fig_candle = go.Figure(data=[go.Candlestick(x=df_price.index, open=df_price['Open'], high=df_price['High'], low=df_price['Low'], close=df_price['Close'], name="Preço")])
         fig_candle.add_hline(y=levels['zero'], line_dash="dash", line_color="yellow", annotation_text="ZERO GAMMA")
         fig_candle.add_hline(y=levels['put'], line_color="green", line_width=2, annotation_text="PUT WALL")
         fig_candle.add_hline(y=levels['call'], line_color="red", line_width=2, annotation_text="CALL WALL")
         fig_candle.update_layout(template="plotly_dark", height=450, xaxis_rangeslider_visible=False)
         st.plotly_chart(fig_candle, use_container_width=True)
+
+        # 3. CHAMADA DO NOVO INDICADOR (OPTIONS INVENTORY)
+        render_options_inventory(calls_data, puts_data, current_price)
 
     with col_side:
         st.subheader("Maiores Mudanças de GEX")
@@ -162,19 +204,15 @@ with st.expander("📖 GUIA GEX PRO: Domine a Dinâmica do Mercado"):
     * **Zero Gamma (O Pivô):** A "fronteira". Abaixo dele, o mercado entra em modo de pânico/aceleração. Acima dele, o mercado tende a ser calmo.
     * **Put Wall & Call Wall:** São os limites psicológicos e técnicos. A Put Wall é o "chão de ferro" e a Call Wall é o "teto de vidro".
 
-    ### 📊 2. Histograma de Gama
-    * **Barras Verdes (Calls):** Representam liquidez que atrai o preço para cima, mas também atua como resistência conforme o MM precisa vender para se proteger (Delta Hedging).
-    * **Barras Vermelhas (Puts):** Representam suporte. Se o preço cai nelas, o MM precisa comprar para se proteger, segurando a queda.
-    * **Dica:** Strikes com barras muito longas são "imãs" de preço.
+    ### 📊 2. Options Inventory (Barras Horizontais)
+    * **Lado Direito (Compra/Long Gamma):** Zonas de liquidez compradora. Se o preço está acima, funcionam como suporte imã.
+    * **Lado Esquerdo (Venda/Short Gamma):** Zonas onde o MM precisa vender para se proteger. Se o preço rompe um nível aqui, ele tende a acelerar rápido para o próximo strike de volume (vácuo de liquidez).
+    * **Polaridade:** Se o preço passa de um strike e volta, a função de suporte/resistência inverte devido ao ajuste de hedge do MM.
 
     ### 🕯️ 3. Candlestick & Níveis GEX
     * Aqui você vê o preço em tempo real cruzando as linhas de **Zero Gamma**, **Put Wall** e **Call Wall**.
     * **Trade de Reversão:** Se o preço toca a Put Wall em cenário de Gama Positivo, há alta probabilidade de repique.
     * **Trade de Rompimento:** Se o preço perde o Zero Gamma com Net GEX negativo, o movimento tende a ser rápido e forte para baixo.
-
-    ### 📉 4. Maiores Mudanças (Lateral)
-    * Lista os strikes onde o dinheiro grosso está se posicionando hoje. 
-    * Se um strike muito abaixo do preço atual começar a ganhar muito volume de GEX negativo (Puts), o mercado está se protegendo para uma queda iminente.
 
     ---
     **Resumo do Sentimento:**
