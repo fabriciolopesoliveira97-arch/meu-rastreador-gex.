@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 import numpy as np
 from scipy.stats import norm
 from datetime import datetime
-import pytz # Adicionado para corrigir o fuso horário
+import pytz
 from streamlit_autorefresh import st_autorefresh
 
 # --- 1. CONFIGURAÇÃO E AUTO-REFRESH ---
@@ -86,10 +86,11 @@ ticker_symbol = st.sidebar.text_input("Ticker", value="QQQ").upper()
 calls_data, puts_data, current_price, df_price, current_expiry = get_gamma_data_v2(ticker_symbol)
 
 if current_expiry:
-    # ATUALIZAÇÃO DO HORÁRIO PARA BRASÍLIA
     fuso_br = pytz.timezone('America/Sao_Paulo')
-    now = datetime.now(fuso_br).strftime("%H:%M:%S")
-    st.info(f"🕒 **Última Atualização:** {now} | 📅 **Vencimento Analisado:** {current_expiry} | 🔍 **Ticker:** {ticker_symbol}")
+    agora = datetime.now(fuso_br)
+    now_time = agora.strftime("%H:%M:%S")
+    now_date = agora.strftime("%d/%m/%Y") # Força a exibição do dia correto (12/02)
+    st.info(f"🕒 **Atualizado em:** {now_date} às {now_time} | 📅 **Vencimento:** {current_expiry} | 🔍 **Ticker:** {ticker_symbol}")
 
 if not calls_data.empty and not puts_data.empty:
     levels = get_gamma_levels(calls_data, puts_data, current_price)
@@ -109,42 +110,26 @@ if not calls_data.empty and not puts_data.empty:
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Preço Atual", f"${current_price:.2f}")
-    c2.metric(
-        "Net GEX", 
-        f"{net_gex_total:.2f}M", 
-        delta="Positivo" if net_gex_total > 0 else "Negativo",
-        delta_color="normal" if net_gex_total > 0 else "inverse"
-    )
+    c2.metric("Net GEX", f"{net_gex_total:.2f}M", delta="Positivo" if net_gex_total > 0 else "Negativo", delta_color="normal" if net_gex_total > 0 else "inverse")
     c3.metric("Zero Gamma", f"${levels['zero']}")
     c4.metric("Put Wall", f"${levels['put']}")
     c5.metric("Call Wall", f"${levels['call']}")
 
     st.markdown(f"### Cenário Atual: **{'SUPRESSÃO' if current_price > levels['zero'] else 'EXPANSÃO'}**")
 
-    # --- LAYOUT EM COLUNAS ---
     col_main, col_side = st.columns([7, 3])
 
     with col_main:
-        # HISTOGRAMA
         fig_hist = go.Figure()
-        fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls', marker_color='#00ffcc',
-                                 hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>",
-                                 customdata=calls_data['Força']))
-        fig_hist.add_trace(go.Bar(x=puts_data['strike'], y=puts_data['GEX'], name='Puts', marker_color='#ff4b4b',
-                                 hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>",
-                                 customdata=puts_data['Força']))
+        fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls', marker_color='#00ffcc', hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>", customdata=calls_data['Força']))
+        fig_hist.add_trace(go.Bar(x=puts_data['strike'], y=puts_data['GEX'], name='Puts', marker_color='#ff4b4b', hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>", customdata=puts_data['Força']))
         fig_hist.add_vline(x=current_price, line_dash="dash", line_color="white", annotation_text=f"SPOT: ${current_price:.2f}")
         
         all_gex = pd.concat([calls_data['GEX'], puts_data['GEX'].abs()])
         limit_y = all_gex.quantile(0.95) * 1.5
-        
-        fig_hist.update_layout(
-            template="plotly_dark", barmode='relative', height=350, hovermode="x unified",
-            yaxis=dict(range=[-limit_y, limit_y]), margin=dict(t=10, b=10)
-        )
+        fig_hist.update_layout(template="plotly_dark", barmode='relative', height=350, hovermode="x unified", yaxis=dict(range=[-limit_y, limit_y]), margin=dict(t=10, b=10))
         st.plotly_chart(fig_hist, use_container_width=True)
 
-        # CANDLESTICK
         fig_candle = go.Figure(data=[go.Candlestick(x=df_price.index, open=df_price['Open'], high=df_price['High'], low=df_price['Low'], close=df_price['Close'], name="Preço")])
         fig_candle.add_hline(y=levels['zero'], line_dash="dash", line_color="yellow", annotation_text="ZERO GAMMA")
         fig_candle.add_hline(y=levels['put'], line_color="green", line_width=2, annotation_text="PUT WALL")
@@ -153,43 +138,48 @@ if not calls_data.empty and not puts_data.empty:
         st.plotly_chart(fig_candle, use_container_width=True)
 
     with col_side:
-        # 1. Maiores Mudanças de GEX
         st.subheader("Maiores Mudanças de GEX")
         all_data = pd.concat([calls_data[['strike', 'GEX']], puts_data[['strike', 'GEX']]])
         changes = all_data.groupby('strike')['GEX'].sum().sort_values(key=abs, ascending=False).head(15)
-        
         for strike, val in changes.items():
             color = "#00ffcc" if val > 0 else "#ff4b4b"
             col_s1, col_s2 = st.columns([1, 1])
             col_s1.write(f"**${strike:.2f}**")
             col_s2.markdown(f"<span style='color:{color}'>{val/10**6:,.2f}M</span>", unsafe_allow_html=True)
-
 else:
     st.warning("Aguardando dados... Verifique se o mercado está aberto.")
 
-# --- 5. GUIA DE OPERAÇÃO DETALHADO ---
+# --- 5. GUIA DE OPERAÇÃO PROFISSIONAL ---
 st.divider()
-with st.expander("📖 GUIA GEX PRO: Como interpretar as métricas e o cenário"):
+with st.expander("📖 GUIA GEX PRO: Domine a Dinâmica do Mercado"):
     st.markdown("""
-    ### 🚦 Indicadores de Topo (Métricas)
-    
-    * **Net GEX (Exposição Líquida):** É a soma de todo o Gama do mercado. 
-    * **Zero Gamma (O Pivô):** É a linha divisória do dia. 
-    * **Call Wall & Put Wall:** Resistência e suporte principais.
+    Este aplicativo monitora a **Exposição de Gama (GEX)** dos Market Makers (MM). O comportamento deles para proteger suas posições é o que move o preço nos pontos críticos.
+
+    ### 🟢 1. As Métricas Principais (Top Bar)
+    * **Net GEX:** É o saldo total de Gama. 
+        * **Positivo (Verde):** MM seguram o preço. Volatilidade baixa.
+        * **Negativo (Vermelho):** MM vendem na queda e compram na alta. Volatilidade explosiva.
+    * **Zero Gamma (O Pivô):** A "fronteira". Abaixo dele, o mercado entra em modo de pânico/aceleração. Acima dele, o mercado tende a ser calmo.
+    * **Put Wall & Call Wall:** São os limites psicológicos e técnicos. A Put Wall é o "chão de ferro" e a Call Wall é o "teto de vidro".
+
+    ### 📊 2. Histograma de Gama
+    * **Barras Verdes (Calls):** Representam liquidez que atrai o preço para cima, mas também atua como resistência conforme o MM precisa vender para se proteger (Delta Hedging).
+    * **Barras Vermelhas (Puts):** Representam suporte. Se o preço cai nelas, o MM precisa comprar para se proteger, segurando a queda.
+    * **Dica:** Strikes com barras muito longas são "imãs" de preço.
+
+    ### 🕯️ 3. Candlestick & Níveis GEX
+    * Aqui você vê o preço em tempo real cruzando as linhas de **Zero Gamma**, **Put Wall** e **Call Wall**.
+    * **Trade de Reversão:** Se o preço toca a Put Wall em cenário de Gama Positivo, há alta probabilidade de repique.
+    * **Trade de Rompimento:** Se o preço perde o Zero Gamma com Net GEX negativo, o movimento tende a ser rápido e forte para baixo.
+
+    ### 📉 4. Maiores Mudanças (Lateral)
+    * Lista os strikes onde o dinheiro grosso está se posicionando hoje. 
+    * Se um strike muito abaixo do preço atual começar a ganhar muito volume de GEX negativo (Puts), o mercado está se protegendo para uma queda iminente.
 
     ---
-
-    ### 📊 O Gráfico de Barras (Histograma)
-    
-    * **Barras Verdes (Calls):** Resistência.
-    * **Barras Vermelhas (Puts):** Suporte.
-
-    ---
-
-    ### 🗺️ Definição dos Cenários
-    
-    * **Cenário de SUPRESSÃO (Preço > Zero Gamma):** Baixa volatilidade.
-    * **Cenário de EXPANSÃO (Preço < Zero Gamma):** Alta volatilidade / Risco de queda.
+    **Resumo do Sentimento:**
+    * **SPOT > Zero Gamma:** Buy the Dip (Compre a correção).
+    * **SPOT < Zero Gamma:** Sell the Rally (Venda o repique).
     """)
 
-st.caption("Dados baseados no modelo Black-Scholes. Atualização via Yahoo Finance. Use para fins educacionais.")
+st.caption("Dados via Yahoo Finance (BS Model). Atualização automática a cada 60s.")
