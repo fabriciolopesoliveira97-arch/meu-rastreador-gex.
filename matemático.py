@@ -118,11 +118,11 @@ if not calls_data.empty and not puts_data.empty:
 
     st.markdown(f"### Cenário Atual: **{'SUPRESSÃO' if current_price > levels['zero'] else 'EXPANSÃO'}**")
 
-    # --- LAYOUT EM COLUNAS ---
+    # --- NOVO LAYOUT COM INDICADOR LATERAL ---
     col_main, col_side = st.columns([7, 3])
 
     with col_main:
-        # HISTOGRAMA
+        # HISTOGRAMA COM ESCALA CORRIGIDA
         fig_hist = go.Figure()
         fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls', marker_color='#00ffcc',
                                  hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>",
@@ -141,7 +141,6 @@ if not calls_data.empty and not puts_data.empty:
         )
         st.plotly_chart(fig_hist, use_container_width=True)
 
-        # CANDLESTICK
         fig_candle = go.Figure(data=[go.Candlestick(x=df_price.index, open=df_price['Open'], high=df_price['High'], low=df_price['Low'], close=df_price['Close'], name="Preço")])
         fig_candle.add_hline(y=levels['zero'], line_dash="dash", line_color="yellow", annotation_text="ZERO GAMMA")
         fig_candle.add_hline(y=levels['put'], line_color="green", line_width=2, annotation_text="PUT WALL")
@@ -150,16 +149,28 @@ if not calls_data.empty and not puts_data.empty:
         st.plotly_chart(fig_candle, use_container_width=True)
 
     with col_side:
-        # 1. Maiores Mudanças de GEX
+        # INDICADOR: MAIORES MUDANÇAS DE GEX (Conforme imagem enviada)
         st.subheader("Maiores Mudanças de GEX")
-        all_data = pd.concat([calls_data[['strike', 'GEX']], puts_data[['strike', 'GEX']]])
-        changes = all_data.groupby('strike')['GEX'].sum().sort_values(key=abs, ascending=False).head(15)
         
-        for strike, val in changes.items():
-            color = "#00ffcc" if val > 0 else "#ff4b4b"
-            col_s1, col_s2 = st.columns([1, 1])
-            col_s1.write(f"**${strike:.2f}**")
-            col_s2.markdown(f"<span style='color:{color}'>{val/10**6:,.2f}M</span>", unsafe_allow_html=True)
+        # Consolidando dados de Calls e Puts por Strike
+        df_total = pd.concat([calls_data[['strike', 'GEX']], puts_data[['strike', 'GEX']]])
+        df_sum = df_total.groupby('strike')['GEX'].sum().reset_index()
+        
+        # Ordenando pelos maiores valores absolutos (mais relevantes)
+        df_top_changes = df_sum.sort_values(by='GEX', key=abs, ascending=False).head(10)
+        
+        # Estilização da Tabela
+        for _, row in df_top_changes.iterrows():
+            strike_val = f"${row['strike']:.2f}"
+            gex_val = row['GEX'] / 10**6
+            color = "#00ffcc" if gex_val > 0 else "#ff4b4b"
+            
+            # Criando linhas formatadas para parecer com a imagem
+            c_s1, c_s2, c_s3 = st.columns([2, 3, 1])
+            c_s1.write(f"**{strike_val}**")
+            c_s2.markdown(f"<span style='color:{color}; font-weight:bold;'>{'+' if gex_val > 0 else ''}{gex_val:.2f}M</span>", unsafe_allow_html=True)
+            c_s3.write("1d")
+            st.divider()
 
 else:
     st.warning("Aguardando dados... Verifique se o mercado está aberto.")
