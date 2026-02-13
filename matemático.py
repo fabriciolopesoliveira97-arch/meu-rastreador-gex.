@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import numpy as np
 from scipy.stats import norm
 from datetime import datetime
+import pytz # Adicionado para corrigir o fuso horário
 from streamlit_autorefresh import st_autorefresh
 
 # --- 1. CONFIGURAÇÃO E AUTO-REFRESH ---
@@ -85,7 +86,9 @@ ticker_symbol = st.sidebar.text_input("Ticker", value="QQQ").upper()
 calls_data, puts_data, current_price, df_price, current_expiry = get_gamma_data_v2(ticker_symbol)
 
 if current_expiry:
-    now = datetime.now().strftime("%H:%M:%S")
+    # ATUALIZAÇÃO DO HORÁRIO PARA BRASÍLIA
+    fuso_br = pytz.timezone('America/Sao_Paulo')
+    now = datetime.now(fuso_br).strftime("%H:%M:%S")
     st.info(f"🕒 **Última Atualização:** {now} | 📅 **Vencimento Analisado:** {current_expiry} | 🔍 **Ticker:** {ticker_symbol}")
 
 if not calls_data.empty and not puts_data.empty:
@@ -118,11 +121,11 @@ if not calls_data.empty and not puts_data.empty:
 
     st.markdown(f"### Cenário Atual: **{'SUPRESSÃO' if current_price > levels['zero'] else 'EXPANSÃO'}**")
 
-    # --- INÍCIO DO NOVO LAYOUT COM INDICADOR OPTIONS INVENTORY ---
-    col_left, col_right = st.columns([7, 3])
+    # --- LAYOUT EM COLUNAS ---
+    col_main, col_side = st.columns([7, 3])
 
-    with col_left:
-        # SEUS GRÁFICOS ORIGINAIS
+    with col_main:
+        # HISTOGRAMA
         fig_hist = go.Figure()
         fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls', marker_color='#00ffcc',
                                  hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>",
@@ -135,45 +138,31 @@ if not calls_data.empty and not puts_data.empty:
         all_gex = pd.concat([calls_data['GEX'], puts_data['GEX'].abs()])
         limit_y = all_gex.quantile(0.95) * 1.5
         
-        fig_hist.update_layout(template="plotly_dark", barmode='relative', height=350, hovermode="x unified", yaxis=dict(range=[-limit_y, limit_y]))
+        fig_hist.update_layout(
+            template="plotly_dark", barmode='relative', height=350, hovermode="x unified",
+            yaxis=dict(range=[-limit_y, limit_y]), margin=dict(t=10, b=10)
+        )
         st.plotly_chart(fig_hist, use_container_width=True)
 
+        # CANDLESTICK
         fig_candle = go.Figure(data=[go.Candlestick(x=df_price.index, open=df_price['Open'], high=df_price['High'], low=df_price['Low'], close=df_price['Close'], name="Preço")])
         fig_candle.add_hline(y=levels['zero'], line_dash="dash", line_color="yellow", annotation_text="ZERO GAMMA")
-        fig_candle.update_layout(template="plotly_dark", height=400, xaxis_rangeslider_visible=False)
+        fig_candle.add_hline(y=levels['put'], line_color="green", line_width=2, annotation_text="PUT WALL")
+        fig_candle.add_hline(y=levels['call'], line_color="red", line_width=2, annotation_text="CALL WALL")
+        fig_candle.update_layout(template="plotly_dark", height=450, xaxis_rangeslider_visible=False)
         st.plotly_chart(fig_candle, use_container_width=True)
 
-        # NOVO: INDICADOR OPTIONS INVENTORY (Barras Horizontais conforme imagem)
-        st.markdown("### 📊 Options Inventory")
-        fig_inv = go.Figure()
-        # Invertendo e filtrando para o visual da imagem
-        df_inv = pd.concat([calls_data, puts_data]).sort_values('strike', ascending=True)
+    with col_side:
+        # 1. Maiores Mudanças de GEX
+        st.subheader("Maiores Mudanças de GEX")
+        all_data = pd.concat([calls_data[['strike', 'GEX']], puts_data[['strike', 'GEX']]])
+        changes = all_data.groupby('strike')['GEX'].sum().sort_values(key=abs, ascending=False).head(15)
         
-        fig_inv.add_trace(go.Bar(y=df_inv['strike'], x=df_inv['GEX'], orientation='h', 
-                                marker_color=np.where(df_inv['GEX']>0, '#00ffcc', '#ff4b4b'),
-                                name='Exposição por Strike'))
-        fig_inv.add_hline(y=current_price, line_dash="dot", line_color="yellow", line_width=2, 
-                          annotation_text=f"SPOT: {current_price:.2f}", annotation_position="top right")
-        
-        fig_inv.update_layout(template="plotly_dark", height=600, margin=dict(l=10, r=10, t=30, b=10),
-                              xaxis_title="GEX Volume", yaxis_title="Strike Price",
-                              hovermode="y unified")
-        st.plotly_chart(fig_inv, use_container_width=True)
-
-    with col_right:
-        # INDICADOR: MAIORES MUDANÇAS DE GEX (Ranking Lateral conforme imagem)
-        st.markdown("### Maiores Mudanças de GEX")
-        df_total = pd.concat([calls_data[['strike', 'GEX']], puts_data[['strike', 'GEX']]])
-        df_sum = df_total.groupby('strike')['GEX'].sum().reset_index()
-        df_top = df_sum.sort_values(by='GEX', key=abs, ascending=False).head(12)
-        
-        for _, row in df_top.iterrows():
-            color = "#00ffcc" if row['GEX'] > 0 else "#ff4b4b"
-            c1, c2, c3 = st.columns([2, 3, 1])
-            c1.write(f"**${row['strike']:.2f}**")
-            c2.markdown(f"<span style='color:{color}; font-weight:bold;'>{row['GEX']/10**6:+.2f}M</span>", unsafe_allow_html=True)
-            c3.write("1d")
-            st.divider()
+        for strike, val in changes.items():
+            color = "#00ffcc" if val > 0 else "#ff4b4b"
+            col_s1, col_s2 = st.columns([1, 1])
+            col_s1.write(f"**${strike:.2f}**")
+            col_s2.markdown(f"<span style='color:{color}'>{val/10**6:,.2f}M</span>", unsafe_allow_html=True)
 
 else:
     st.warning("Aguardando dados... Verifique se o mercado está aberto.")
@@ -184,14 +173,23 @@ with st.expander("📖 GUIA GEX PRO: Como interpretar as métricas e o cenário"
     st.markdown("""
     ### 🚦 Indicadores de Topo (Métricas)
     
-    * **Net GEX (Exposição Líquida):** É a soma de todo o Gama do mercado.
-    * **Zero Gamma (O Pivô):** É a linha divisória do dia.
-    * **Call Wall & Put Wall:** Resistência máxima e suporte técnico principal.
-    
+    * **Net GEX (Exposição Líquida):** É a soma de todo o Gama do mercado. 
+    * **Zero Gamma (O Pivô):** É a linha divisória do dia. 
+    * **Call Wall & Put Wall:** Resistência e suporte principais.
+
     ---
+
+    ### 📊 O Gráfico de Barras (Histograma)
+    
+    * **Barras Verdes (Calls):** Resistência.
+    * **Barras Vermelhas (Puts):** Suporte.
+
+    ---
+
     ### 🗺️ Definição dos Cenários
-    * **Cenário de SUPRESSÃO (Preço > Zero Gamma):** Movimentos lentos, reversão à média.
-    * **Cenário de EXPANSÃO (Preço < Zero Gamma):** Volatilidade alta, tendências fortes de queda.
+    
+    * **Cenário de SUPRESSÃO (Preço > Zero Gamma):** Baixa volatilidade.
+    * **Cenário de EXPANSÃO (Preço < Zero Gamma):** Alta volatilidade / Risco de queda.
     """)
 
-st.caption("Dados baseados no modelo Black-Scholes. Atualização via Yahoo Finance.")
+st.caption("Dados baseados no modelo Black-Scholes. Atualização via Yahoo Finance. Use para fins educacionais.")
