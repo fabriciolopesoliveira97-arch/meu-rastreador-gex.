@@ -118,11 +118,11 @@ if not calls_data.empty and not puts_data.empty:
 
     st.markdown(f"### Cenário Atual: **{'SUPRESSÃO' if current_price > levels['zero'] else 'EXPANSÃO'}**")
 
-    # --- INICIO DAS ADIÇÕES DE LAYOUT (IMAGENS) ---
+    # --- LAYOUT EM COLUNAS ---
     col_main, col_side = st.columns([7, 3])
 
     with col_main:
-        # HISTOGRAMA COM ESCALA CORRIGIDA
+        # HISTOGRAMA
         fig_hist = go.Figure()
         fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls', marker_color='#00ffcc',
                                  hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>",
@@ -141,6 +141,7 @@ if not calls_data.empty and not puts_data.empty:
         )
         st.plotly_chart(fig_hist, use_container_width=True)
 
+        # CANDLESTICK
         fig_candle = go.Figure(data=[go.Candlestick(x=df_price.index, open=df_price['Open'], high=df_price['High'], low=df_price['Low'], close=df_price['Close'], name="Preço")])
         fig_candle.add_hline(y=levels['zero'], line_dash="dash", line_color="yellow", annotation_text="ZERO GAMMA")
         fig_candle.add_hline(y=levels['put'], line_color="green", line_width=2, annotation_text="PUT WALL")
@@ -175,12 +176,6 @@ if not calls_data.empty and not puts_data.empty:
             c_h.write(item['hora'])
             c_e.write(item['evento'])
             c_p.write(item['prev'])
-
-    # 3. Mapa de Calor (Heatmap) no final
-    st.divider()
-    st.subheader("🔥 Mapa de Calor do Mercado")
-    st.image("https://finviz.com/p_map_s500.png", use_container_width=True)
-    # --- FIM DAS ADIÇÕES ---
 
 else:
     st.warning("Aguardando dados... Verifique se o mercado está aberto.")
