@@ -153,26 +153,42 @@ else:
 
 # --- 5. GUIA DE OPERAÇÃO PROFISSIONAL ---
 st.divider()
-with st.expander("📖 GUIA GEX PRO: Domine a Dinâmica do Mercado"):
+with st.expander("📖 GUIA GEX PRO: Como Ler e Operar os Dados"):
     st.markdown("""
-    Este aplicativo monitora a **Exposição de Gama (GEX)** dos Market Makers (MM). O comportamento deles para proteger suas posições é o que move o preço nos pontos críticos.
-
-    ### 🟢 1. As Métricas Principais (Top Bar)
-    * **Net GEX:** É o saldo total de Gama. 
-        * **Positivo (Verde):** MM seguram o preço. Volatilidade baixa.
-        * **Negativo (Vermelho):** MM vendem na queda e compram na alta. Volatilidade explosiva.
-    * **Zero Gamma (O Pivô):** A "fronteira". Abaixo dele, o mercado entra em modo de pânico/aceleração. Acima dele, o mercado tende a ser calmo.
-    * **Put Wall & Call Wall:** São os limites psicológicos e técnicos. A Put Wall é o "chão de ferro" e a Call Wall é o "teto de vidro".
-
-    ### 🕯️ 3. Candlestick & Níveis GEX
-    * Aqui você vê o preço em tempo real cruzando as linhas de **Zero Gamma**, **Put Wall** e **Call Wall**.
-    * **Trade de Reversão:** Se o preço toca a Put Wall em cenário de Gama Positivo, há alta probabilidade de repique.
-    * **Trade de Rompimento:** Se o preço perde o Zero Gamma com Net GEX negativo, o movimento tende a ser rápido e forte para baixo.
+    ### 🧠 O que é GEX (Gamma Exposure)?
+    O GEX mede a exposição dos **Market Makers (MM)** — as grandes instituições que fornecem liquidez. Para se manterem neutros, eles precisam comprar ou vender a ação conforme o preço se move. O comportamento deles dita o ritmo do mercado.
 
     ---
-    **Resumo do Sentimento:**
-    * **SPOT > Zero Gamma:** Buy the Dip (Compre a correção).
-    * **SPOT < Zero Gamma:** Sell the Rally (Venda o repique).
+
+    ### 🟢 1. Indicadores do Topo (Métricas em Tempo Real)
+    * **Preço Atual (SPOT):** O valor de mercado agora.
+    * **Net GEX:** O saldo total de exposição.
+        * **Positivo (Verde):** O mercado está em "Zona de Estabilidade". MM compram quedas e vendem altas, reduzindo a volatilidade (Preço "preso").
+        * **Negativo (Vermelho):** O mercado está em "Zona de Aceleração". MM vendem quedas e compram altas, gerando movimentos rápidos e explosivos.
+    * **Zero Gamma (O Divisor de Águas):** É o preço onde o sentimento muda. Acima dele é alta probabilidade de calma; abaixo dele é alta probabilidade de pânico/volatilidade.
+    * **Put Wall (Muralha de Puts):** O strike com maior exposição negativa. Funciona como o suporte mais forte do dia.
+    * **Call Wall (Muralha de Calls):** O strike com maior exposição positiva. Funciona como a resistência principal.
+
+    ---
+
+    ### 📊 2. Histograma de Exposição (Gráfico de Barras)
+    * **Barras Verdes (Calls):** Representam liquidez que "puxa" o preço para cima ou atua como teto.
+    * **Barras Vermelhas (Puts):** Representam liquidez que "segura" o preço ou, se rompida, acelera a queda.
+    * **Eixo X:** Preços de Strike (Alvos do mercado).
+    * **Eixo Y:** Volume financeiro de exposição gama.
+
+    ---
+
+    ### 🕯️ 3. Candlestick e Níveis Críticos
+    * Este gráfico pluma o preço sobre os níveis calculados de **Zero Gamma, Put Wall e Call Wall**.
+    * **Estratégia de Reversão:** Se o preço toca a *Put Wall* e o *Net GEX* está positivo, é um forte sinal de repique.
+    * **Estratégia de Rompimento:** Se o preço cruza o *Zero Gamma* para baixo, espere uma aceleração da queda.
+
+    ---
+
+    ### ⚡ 4. Cenários de Sentimento
+    * **SUPRESSÃO:** O preço está acima do Zero Gamma. A volatilidade é "esmagada". Ótimo para operações de retorno à média.
+    * **EXPANSÃO:** O preço está abaixo do Zero Gamma. A volatilidade "explode". Favorável para operações de tendência e proteção (Hedge).
     """)
 
 st.caption("Dados via Yahoo Finance (BS Model). Atualização automática a cada 60s.")
