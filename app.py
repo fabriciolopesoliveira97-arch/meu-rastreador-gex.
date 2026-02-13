@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import numpy as np
 from scipy.stats import norm
 from datetime import datetime
+import pytz
 from streamlit_autorefresh import st_autorefresh
 
 # --- 1. CONFIGURAÇÃO E AUTO-REFRESH ---
@@ -85,8 +86,11 @@ ticker_symbol = st.sidebar.text_input("Ticker", value="QQQ").upper()
 calls_data, puts_data, current_price, df_price, current_expiry = get_gamma_data_v2(ticker_symbol)
 
 if current_expiry:
-    now = datetime.now().strftime("%H:%M:%S")
-    st.info(f"🕒 **Última Atualização:** {now} | 📅 **Vencimento Analisado:** {current_expiry} | 🔍 **Ticker:** {ticker_symbol}")
+    fuso_br = pytz.timezone('America/Sao_Paulo')
+    agora = datetime.now(fuso_br)
+    now_time = agora.strftime("%H:%M:%S")
+    now_date = agora.strftime("%d/%m/%Y") 
+    st.info(f"🕒 **Atualizado em:** {now_date} às {now_time} | 📅 **Vencimento:** {current_expiry} | 🔍 **Ticker:** {ticker_symbol}")
 
 if not calls_data.empty and not puts_data.empty:
     levels = get_gamma_levels(calls_data, puts_data, current_price)
@@ -106,84 +110,112 @@ if not calls_data.empty and not puts_data.empty:
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Preço Atual", f"${current_price:.2f}")
-    c2.metric(
-        "Net GEX", 
-        f"{net_gex_total:.2f}M", 
-        delta="Positivo" if net_gex_total > 0 else "Negativo",
-        delta_color="normal" if net_gex_total > 0 else "inverse"
-    )
+    c2.metric("Net GEX", f"{net_gex_total:.2f}M", delta="Positivo" if net_gex_total > 0 else "Negativo", delta_color="normal" if net_gex_total > 0 else "inverse")
     c3.metric("Zero Gamma", f"${levels['zero']}")
     c4.metric("Put Wall", f"${levels['put']}")
     c5.metric("Call Wall", f"${levels['call']}")
 
+    # --- NOVO BLOCO: ANÁLISE DE PROBABILIDADE ---
+    st.divider()
+    
+    if net_gex_total > 0 and current_price > levels['zero']:
+        prob_desc = "ALTA (Estabilidade)"
+        sentimento = "Os Market Makers estão provendo suporte. O cenário favorece a continuidade da alta ou lateralização (baixa volatilidade)."
+        cor_alerta = "success"
+    elif net_gex_total < 0 and current_price < levels['zero']:
+        prob_desc = "BAIXA (Aceleração)"
+        sentimento = "O mercado entrou em 'Gamma Negativo'. Há risco de 'Gamma Squeeze' vendedor, onde quedas geram mais vendas automáticas."
+        cor_alerta = "error"
+    elif current_price < levels['zero'] and net_gex_total > 0:
+        prob_desc = "RECUPERAÇÃO (Transição)"
+        sentimento = "O preço está em zona perigosa, mas o saldo total de Gamma ainda é positivo. Chance de repique no curto prazo."
+        cor_alerta = "warning"
+    else:
+        prob_desc = "NEUTRA / INDEFINIDA"
+        sentimento = "O mercado está testando níveis críticos. Aguarde o distanciamento do Zero Gamma para confirmar a tendência."
+        cor_alerta = "info"
+
+    st.subheader("🎯 Análise Probabilística de Curto Prazo")
+    if cor_alerta == "success": st.success(f"**Direção Provável:** {prob_desc}\n\n{sentimento}")
+    elif cor_alerta == "error": st.error(f"**Direção Provável:** {prob_desc}\n\n{sentimento}")
+    elif cor_alerta == "warning": st.warning(f"**Direção Provável:** {prob_desc}\n\n{sentimento}")
+    else: st.info(f"**Direção Provável:** {prob_desc}\n\n{sentimento}")
+    # --- FIM DO NOVO BLOCO ---
+
     st.markdown(f"### Cenário Atual: **{'SUPRESSÃO' if current_price > levels['zero'] else 'EXPANSÃO'}**")
 
-    # HISTOGRAMA COM ESCALA CORRIGIDA
-    fig_hist = go.Figure()
-    fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls', marker_color='#00ffcc',
-                             hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>",
-                             customdata=calls_data['Força']))
-    fig_hist.add_trace(go.Bar(x=puts_data['strike'], y=puts_data['GEX'], name='Puts', marker_color='#ff4b4b',
-                             hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>",
-                             customdata=puts_data['Força']))
-    fig_hist.add_vline(x=current_price, line_dash="dash", line_color="white", annotation_text=f"SPOT: ${current_price:.2f}")
-    
-    all_gex = pd.concat([calls_data['GEX'], puts_data['GEX'].abs()])
-    limit_y = all_gex.quantile(0.95) * 1.5
-    
-    fig_hist.update_layout(
-        template="plotly_dark", barmode='relative', height=350, hovermode="x unified",
-        yaxis=dict(range=[-limit_y, limit_y])
-    )
-    st.plotly_chart(fig_hist, use_container_width=True)
+    col_main, col_side = st.columns([7, 3])
 
-    fig_candle = go.Figure(data=[go.Candlestick(x=df_price.index, open=df_price['Open'], high=df_price['High'], low=df_price['Low'], close=df_price['Close'], name="Preço")])
-    fig_candle.add_hline(y=levels['zero'], line_dash="dash", line_color="yellow", annotation_text="ZERO GAMMA")
-    fig_candle.add_hline(y=levels['put'], line_color="green", line_width=2, annotation_text="PUT WALL")
-    fig_candle.add_hline(y=levels['call'], line_color="red", line_width=2, annotation_text="CALL WALL")
-    fig_candle.update_layout(template="plotly_dark", height=450, xaxis_rangeslider_visible=False)
-    st.plotly_chart(fig_candle, use_container_width=True)
+    with col_main:
+        # 1. Histograma Original
+        fig_hist = go.Figure()
+        fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls', marker_color='#00ffcc', hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>", customdata=calls_data['Força']))
+        fig_hist.add_trace(go.Bar(x=puts_data['strike'], y=puts_data['GEX'], name='Puts', marker_color='#ff4b4b', hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>", customdata=puts_data['Força']))
+        fig_hist.add_vline(x=current_price, line_dash="dash", line_color="white", annotation_text=f"SPOT: ${current_price:.2f}")
+        
+        all_gex = pd.concat([calls_data['GEX'], puts_data['GEX'].abs()])
+        limit_y = all_gex.quantile(0.95) * 1.5
+        fig_hist.update_layout(template="plotly_dark", barmode='relative', height=350, hovermode="x unified", yaxis=dict(range=[-limit_y, limit_y]), margin=dict(t=10, b=10))
+        st.plotly_chart(fig_hist, use_container_width=True)
 
+        # 2. Candlestick Original
+        fig_candle = go.Figure(data=[go.Candlestick(x=df_price.index, open=df_price['Open'], high=df_price['High'], low=df_price['Low'], close=df_price['Close'], name="Preço")])
+        fig_candle.add_hline(y=levels['zero'], line_dash="dash", line_color="yellow", annotation_text="ZERO GAMMA")
+        fig_candle.add_hline(y=levels['put'], line_color="green", line_width=2, annotation_text="PUT WALL")
+        fig_candle.add_hline(y=levels['call'], line_color="red", line_width=2, annotation_text="CALL WALL")
+        fig_candle.update_layout(template="plotly_dark", height=450, xaxis_rangeslider_visible=False)
+        st.plotly_chart(fig_candle, use_container_width=True)
+
+    with col_side:
+        st.subheader("Maiores Mudanças de GEX")
+        all_data = pd.concat([calls_data[['strike', 'GEX']], puts_data[['strike', 'GEX']]])
+        changes = all_data.groupby('strike')['GEX'].sum().sort_values(key=abs, ascending=False).head(15)
+        for strike, val in changes.items():
+            color = "#00ffcc" if val > 0 else "#ff4b4b"
+            col_s1, col_s2 = st.columns([1, 1])
+            col_s1.write(f"**${strike:.2f}**")
+            col_s2.markdown(f"<span style='color:{color}'>{val/10**6:,.2f}M</span>", unsafe_allow_html=True)
 else:
     st.warning("Aguardando dados... Verifique se o mercado está aberto.")
 
-# --- 5. GUIA DE OPERAÇÃO DETALHADO ---
+# --- 5. GUIA DE OPERAÇÃO PROFISSIONAL ---
 st.divider()
-with st.expander("📖 GUIA GEX PRO: Como interpretar as métricas e o cenário"):
+with st.expander("📖 GUIA GEX PRO: Como Ler e Operar os Dados"):
     st.markdown("""
-    ### 🚦 Indicadores de Topo (Métricas)
-    
-    * **Net GEX (Exposição Líquida):** É a soma de todo o Gama do mercado. 
-        * **Verde (Positivo):** Indica que o mercado está "protegido". Os Market Makers tendem a segurar a volatilidade.
-        * **Vermelho (Negativo):** Indica que o mercado está "desprotegido". O risco de quedas rápidas e vácuos de liquidez é alto.
-        
-    * **Zero Gamma (O Pivô):** É a linha divisória do dia. 
-        * Se o preço está **acima**, você está em águas calmas.
-        * Se o preço está **abaixo**, você está em águas perigosas (Zona de Expansão).
-        
-    * **Call Wall & Put Wall:** * **Call Wall:** O "teto" onde a resistência é máxima. Raramente o preço rompe este nível sem um evento muito forte.
-        * **Put Wall:** O "chão" técnico. Se o preço cair abaixo disso, o pânico pode acelerar pois os Market Makers precisam vender agressivamente para se proteger.
+    ### 🧠 O que é GEX (Gamma Exposure)?
+    O GEX mede a exposição dos **Market Makers (MM)** — as grandes instituições que fornecem liquidez. Para se manterem neutros, eles precisam comprar ou vender a ação conforme o preço se move. O comportamento deles dita o ritmo do mercado.
 
     ---
 
-    ### 📊 O Gráfico de Barras (Histograma)
-    
-    * **Barras Verdes (Calls):** Mostram onde os investidores estão otimistas. Quanto maior a barra, mais forte aquele strike atua como um "ímã" que impede o preço de disparar descontroladamente (Resistência).
-    * **Barras Vermelhas (Puts):** Mostram onde está a proteção contra quedas. Se as barras de Puts forem muito maiores que as de Calls, a pressão vendedora no dia é dominante.
-    * **Força %:** No hover (ao passar o mouse), você vê o peso de cada strike. Strikes com força > 10% dominam a movimentação do dia.
+    ### 🟢 1. Indicadores do Topo (Métricas em Tempo Real)
+    * **Preço Atual (SPOT):** O valor de mercado agora.
+    * **Net GEX:** O saldo total de exposição.
+        * **Positivo (Verde):** O mercado está em "Zona de Estabilidade". MM compram quedas e vendem altas, reduzindo a volatilidade (Preço "preso").
+        * **Negativo (Vermelho):** O mercado está em "Zona de Aceleração". MM vendem quedas e compram altas, gerando movimentos rápidos e explosivos.
+    * **Zero Gamma (O Divisor de Águas):** É o preço onde o sentimento muda. Acima dele é alta probabilidade de calma; abaixo dele é alta probabilidade de pânico/volatilidade.
+    * **Put Wall (Muralha de Puts):** O strike com maior exposição negativa. Funciona como o suporte mais forte do dia.
+    * **Call Wall (Muralha de Calls):** O strike com maior exposição positiva. Funciona como a resistência principal.
 
     ---
 
-    ### 🗺️ Definição dos Cenários
-    
-    * **Cenário de SUPRESSÃO (Preço > Zero Gamma):** * Os Market Makers compram quando cai e vendem quando sobe. 
-        * **O que esperar:** Movimentos lentos, reversão à média, dias de "range" lateral. É o cenário ideal para quem vende opções ou faz operações de tiro curto.
-        
-    * **Cenário de EXPANSÃO (Preço < Zero Gamma):** * Os Market Makers vendem quando cai e compram quando sobe (Hedge Dinâmico). Isso "alimenta" o movimento do preço.
-        * **O que esperar:** Volatilidade alta, tendências fortes de queda, movimentos bruscos. É aqui que ocorrem os "Flash Crashes".
+    ### 📊 2. Histograma de Exposição (Gráfico de Barras)
+    * **Barras Verdes (Calls):** Representam liquidez que "puxa" o preço para cima ou atua como teto.
+    * **Barras Vermelhas (Puts):** Representam liquidez que "segura" o preço ou, se rompida, acelera a queda.
+    * **Eixo X:** Preços de Strike (Alvos do mercado).
+    * **Eixo Y:** Volume financeiro de exposição gama.
 
     ---
-    *Dica: Se o Preço Atual estiver exatamente sobre o Zero Gamma, o mercado está em um momento de decisão. O lado que vencer (rompimento para cima ou para baixo) ditará a direção das próximas horas.*
+
+    ### 🕯️ 3. Candlestick e Níveis Críticos
+    * Este gráfico pluma o preço sobre os níveis calculados de **Zero Gamma, Put Wall e Call Wall**.
+    * **Estratégia de Reversão:** Se o preço toca a *Put Wall* e o *Net GEX* está positivo, é um forte sinal de repique.
+    * **Estratégia de Rompimento:** Se o preço cruza o *Zero Gamma* para baixo, espere uma aceleração da queda.
+
+    ---
+
+    ### ⚡ 4. Cenários de Sentimento
+    * **SUPRESSÃO:** O preço está acima do Zero Gamma. A volatilidade é "esmagada". Ótimo para operações de retorno à média.
+    * **EXPANSÃO:** O preço está abaixo do Zero Gamma. A volatilidade "explode". Favorável para operações de tendência e proteção (Hedge).
     """)
 
-st.caption("Dados baseados no modelo Black-Scholes. Atualização via Yahoo Finance. Use para fins educacionais.")
+st.caption("Dados via Yahoo Finance (BS Model). Atualização automática a cada 60s.")
