@@ -115,6 +115,32 @@ if not calls_data.empty and not puts_data.empty:
     c4.metric("Put Wall", f"${levels['put']}")
     c5.metric("Call Wall", f"${levels['call']}")
 
+    # --- INÍCIO DO BLOCO ADICIONADO ---
+    st.divider()
+    if net_gex_total > 0 and current_price > levels['zero']:
+        prob_desc = "ALTA (Estabilidade)"
+        sentimento = "Os Market Makers estão provendo suporte. O cenário favorece a continuidade da alta ou lateralização (baixa volatilidade)."
+        cor_alerta = "success"
+    elif net_gex_total < 0 and current_price < levels['zero']:
+        prob_desc = "BAIXA (Aceleração)"
+        sentimento = "O mercado entrou em 'Gamma Negativo'. Há risco de 'Gamma Squeeze' vendedor, onde quedas geram mais vendas automáticas."
+        cor_alerta = "error"
+    elif current_price < levels['zero'] and net_gex_total > 0:
+        prob_desc = "RECUPERAÇÃO (Transição)"
+        sentimento = "O preço está em zona perigosa, mas o saldo total de Gamma ainda é positivo. Chance de repique no curto prazo."
+        cor_alerta = "warning"
+    else:
+        prob_desc = "NEUTRA / INDEFINIDA"
+        sentimento = "O mercado está testando níveis críticos. Aguarde o distanciamento do Zero Gamma para confirmar a tendência."
+        cor_alerta = "info"
+
+    st.subheader("🎯 Análise Probabilística de Curto Prazo")
+    if cor_alerta == "success": st.success(f"**Direção Provável:** {prob_desc}\n\n{sentimento}")
+    elif cor_alerta == "error": st.error(f"**Direção Provável:** {prob_desc}\n\n{sentimento}")
+    elif cor_alerta == "warning": st.warning(f"**Direção Provável:** {prob_desc}\n\n{sentimento}")
+    else: st.info(f"**Direção Provável:** {prob_desc}\n\n{sentimento}")
+    # --- FIM DO BLOCO ADICIONADO ---
+
     st.markdown(f"### Cenário Atual: **{'SUPRESSÃO' if current_price > levels['zero'] else 'EXPANSÃO'}**")
 
     col_main, col_side = st.columns([7, 3])
