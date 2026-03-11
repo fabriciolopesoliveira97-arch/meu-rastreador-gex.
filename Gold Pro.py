@@ -37,7 +37,7 @@ def get_gamma_data_v2(ticker_symbol):
         options = tk.option_chain(expiry_date)
         d_exp = datetime.strptime(expiry_date, '%Y-%m-%d')
         T = max((d_exp - datetime.now()).days + 1, 1) / 365.0
-        r = 0.045 # Taxa livre de risco aproximada
+        r = 0.045 
 
         margin = 0.10 
         calls = options.calls[(options.calls['strike'] > S*(1-margin)) & (options.calls['strike'] < S*(1+margin)) & (options.calls['openInterest'] > 20)].copy()
@@ -46,7 +46,6 @@ def get_gamma_data_v2(ticker_symbol):
         calls['GEX'] = calls.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']) * x['openInterest'] * 100 * S**2 * 0.01, axis=1)
         puts['GEX'] = puts.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']) * x['openInterest'] * 100 * S**2 * 0.01 * -1, axis=1)
         
-        # Limpeza de outliers para não distorcer o histograma
         for df in [calls, puts]:
             if not df.empty:
                 q_high = df['GEX'].abs().quantile(0.99)
@@ -82,19 +81,52 @@ def get_gamma_levels(calls, puts, S):
 
 # --- 4. INTERFACE ---
 st.title("GEX PRO Gold - Real Time 🏆")
-# Ticker padrão alterado para GLD (Proxy do Ouro com liquidez de opções)
-ticker_symbol = st.sidebar.text_input("Ticker (Ouro = GLD)", value="GLD").upper()
+
+# Novos inputs na barra lateral para o sistema de conversão
+st.sidebar.header("⚙️ Configurações de Escala")
+ticker_symbol = st.sidebar.text_input("Ticker Opções (Liquidez)", value="GLD").upper()
+spot_ticker = st.sidebar.text_input("Ticker Spot (Referência)", value="XAUUSD=X").upper()
+converter_escala = st.sidebar.checkbox("Sincronizar com gráfico do celular (Spot)", value=True)
+
 calls_data, puts_data, current_price, df_price, current_expiry = get_gamma_data_v2(ticker_symbol)
 
-if current_expiry:
+if current_expiry and not calls_data.empty and not puts_data.empty:
+    
+    # --- SISTEMA DE CONVERSÃO SPOT ---
+    multiplier = 1.0
+    if converter_escala:
+        try:
+            tk_spot = yf.Ticker(spot_ticker)
+            spot_hist = tk_spot.history(period="1d", interval="5m")
+            if spot_hist.empty: 
+                spot_hist = tk_spot.history(period="1d")
+            
+            if not spot_hist.empty:
+                spot_price = spot_hist['Close'].iloc[-1]
+                multiplier = spot_price / current_price
+                st.sidebar.success(f"Conversão Ativa! Escala multiplicada por: {multiplier:.2f}x")
+            else:
+                st.sidebar.warning("Sem dados do Spot. Usando escala padrão.")
+        except:
+            st.sidebar.error("Erro ao buscar Spot. Verifique o ticker.")
+            
+    # Escalonando os dados
+    current_price = current_price * multiplier
+    calls_data['strike'] = calls_data['strike'] * multiplier
+    puts_data['strike'] = puts_data['strike'] * multiplier
+    df_price['Open'] = df_price['Open'] * multiplier
+    df_price['High'] = df_price['High'] * multiplier
+    df_price['Low'] = df_price['Low'] * multiplier
+    df_price['Close'] = df_price['Close'] * multiplier
+
+    # Calculando os níveis já com a escala ajustada
+    levels = get_gamma_levels(calls_data, puts_data, current_price)
+    
     fuso_br = pytz.timezone('America/Sao_Paulo')
     agora = datetime.now(fuso_br)
     now_time = agora.strftime("%H:%M:%S")
     now_date = agora.strftime("%d/%m/%Y") 
-    st.info(f"🕒 **Atualizado em:** {now_date} às {now_time} | 📅 **Vencimento das Opções:** {current_expiry} | 🔍 **Ativo:** {ticker_symbol}")
-
-if not calls_data.empty and not puts_data.empty:
-    levels = get_gamma_levels(calls_data, puts_data, current_price)
+    st.info(f"🕒 **Atualizado em:** {now_date} às {now_time} | 📅 **Vencimento das Opções:** {current_expiry} | 🔍 **Ativo Foco:** {spot_ticker if converter_escala else ticker_symbol}")
     
     total_abs_gex = calls_data['GEX'].sum() + puts_data['GEX'].abs().sum()
     calls_data['Força'] = (calls_data['GEX'] / total_abs_gex * 100).round(2)
@@ -103,18 +135,18 @@ if not calls_data.empty and not puts_data.empty:
     net_gex_total = (calls_data['GEX'].sum() + puts_data['GEX'].sum()) / 10**6
     
     if current_price < levels['put']:
-        st.error(f"⚠️ ABAIXO DO SUPORTE: Preço furou a Put Wall (${levels['put']}) do Ouro")
+        st.error(f"⚠️ ABAIXO DO SUPORTE: Preço furou a Put Wall (${levels['put']:.2f})")
     if current_price < levels['zero']:
-        st.warning(f"🔥 RISCO: GAMA NEGATIVO - Nível Crítico: ${levels['zero']}")
+        st.warning(f"🔥 RISCO: GAMA NEGATIVO - Nível Crítico: ${levels['zero']:.2f}")
     else:
-        st.success(f"✅ ESTABILIDADE: GAMA POSITIVO - Pivô: ${levels['zero']}")
+        st.success(f"✅ ESTABILIDADE: GAMA POSITIVO - Pivô: ${levels['zero']:.2f}")
 
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Preço Atual (GLD)", f"${current_price:.2f}")
+    c1.metric("Preço Atual", f"${current_price:.2f}")
     c2.metric("Net GEX", f"{net_gex_total:.2f}M", delta="Positivo" if net_gex_total > 0 else "Negativo", delta_color="normal" if net_gex_total > 0 else "inverse")
-    c3.metric("Zero Gamma", f"${levels['zero']}")
-    c4.metric("Put Wall", f"${levels['put']}")
-    c5.metric("Call Wall", f"${levels['call']}")
+    c3.metric("Zero Gamma", f"${levels['zero']:.2f}")
+    c4.metric("Put Wall", f"${levels['put']:.2f}")
+    c5.metric("Call Wall", f"${levels['call']:.2f}")
 
     st.divider()
     if net_gex_total > 0 and current_price > levels['zero']:
@@ -134,7 +166,7 @@ if not calls_data.empty and not puts_data.empty:
         sentimento = "O mercado está testando níveis críticos. Aguarde o distanciamento do Zero Gamma para confirmar a tendência."
         cor_alerta = "info"
 
-    st.subheader("🎯 Análise Probabilística de Curto Prazo para o Ouro")
+    st.subheader("🎯 Análise Probabilística de Curto Prazo")
     if cor_alerta == "success": st.success(f"**Direção Provável:** {prob_desc}\n\n{sentimento}")
     elif cor_alerta == "error": st.error(f"**Direção Provável:** {prob_desc}\n\n{sentimento}")
     elif cor_alerta == "warning": st.warning(f"**Direção Provável:** {prob_desc}\n\n{sentimento}")
@@ -145,10 +177,9 @@ if not calls_data.empty and not puts_data.empty:
     col_main, col_side = st.columns([7, 3])
 
     with col_main:
-        # 1. Histograma Original
         fig_hist = go.Figure()
-        fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls', marker_color='#ffd700', hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>", customdata=calls_data['Força'])) # Cor alterada para dourado
-        fig_hist.add_trace(go.Bar(x=puts_data['strike'], y=puts_data['GEX'], name='Puts', marker_color='#ff4b4b', hovertemplate="Strike: %{x}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>", customdata=puts_data['Força']))
+        fig_hist.add_trace(go.Bar(x=calls_data['strike'], y=calls_data['GEX'], name='Calls', marker_color='#ffd700', hovertemplate="Strike: %{x:.2f}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>", customdata=calls_data['Força']))
+        fig_hist.add_trace(go.Bar(x=puts_data['strike'], y=puts_data['GEX'], name='Puts', marker_color='#ff4b4b', hovertemplate="Strike: %{x:.2f}<br>GEX: %{y:,.0f}<br>Força: %{customdata}%<extra></extra>", customdata=puts_data['Força']))
         fig_hist.add_vline(x=current_price, line_dash="dash", line_color="white", annotation_text=f"SPOT: ${current_price:.2f}")
         
         all_gex = pd.concat([calls_data['GEX'], puts_data['GEX'].abs()])
@@ -156,7 +187,6 @@ if not calls_data.empty and not puts_data.empty:
         fig_hist.update_layout(template="plotly_dark", barmode='relative', height=350, hovermode="x unified", yaxis=dict(range=[-limit_y, limit_y]), margin=dict(t=10, b=10))
         st.plotly_chart(fig_hist, use_container_width=True)
 
-        # 2. Candlestick Original
         fig_candle = go.Figure(data=[go.Candlestick(x=df_price.index, open=df_price['Open'], high=df_price['High'], low=df_price['Low'], close=df_price['Close'], name="Preço")])
         fig_candle.add_hline(y=levels['zero'], line_dash="dash", line_color="yellow", annotation_text="ZERO GAMMA")
         fig_candle.add_hline(y=levels['put'], line_color="green", line_width=2, annotation_text="PUT WALL")
@@ -169,7 +199,7 @@ if not calls_data.empty and not puts_data.empty:
         all_data = pd.concat([calls_data[['strike', 'GEX']], puts_data[['strike', 'GEX']]])
         changes = all_data.groupby('strike')['GEX'].sum().sort_values(key=abs, ascending=False).head(15)
         for strike, val in changes.items():
-            color = "#ffd700" if val > 0 else "#ff4b4b" # Cor ajustada para o tema ouro
+            color = "#ffd700" if val > 0 else "#ff4b4b"
             col_s1, col_s2 = st.columns([1, 1])
             col_s1.write(f"**${strike:.2f}**")
             col_s2.markdown(f"<span style='color:{color}'>{val/10**6:,.2f}M</span>", unsafe_allow_html=True)
@@ -186,7 +216,7 @@ with st.expander("📖 GUIA GEX PRO: Como Ler e Operar os Dados de Ouro"):
     ---
 
     ### 🟢 1. Indicadores do Topo (Métricas em Tempo Real)
-    * **Preço Atual (SPOT):** O valor do ETF GLD agora.
+    * **Preço Atual (SPOT):** O valor sincronizado com seu gráfico de negociação.
     * **Net GEX:** O saldo total de exposição.
         * **Positivo (Verde):** O mercado está em "Zona de Estabilidade". MM compram quedas e vendem altas, reduzindo a volatilidade.
         * **Negativo (Vermelho):** O mercado está em "Zona de Aceleração". MM vendem quedas e compram altas, gerando movimentos rápidos e explosivos no ouro.
@@ -195,4 +225,4 @@ with st.expander("📖 GUIA GEX PRO: Como Ler e Operar os Dados de Ouro"):
     * **Call Wall (Muralha de Calls):** O strike com maior exposição positiva. Funciona como a resistência principal.
     """)
 
-st.caption("Dados via Yahoo Finance (BS Model aplicado ao GLD). Atualização automática a cada 60s.")
+st.caption("Dados de Opções via GLD convertidos para a escala de Ouro Spot. Atualização automática a cada 60s.")
