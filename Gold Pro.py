@@ -88,6 +88,9 @@ ticker_symbol = st.sidebar.text_input("Ticker Opções (Liquidez)", value="GLD")
 spot_ticker = st.sidebar.text_input("Ticker Spot (Referência)", value="XAUUSD=X").upper()
 converter_escala = st.sidebar.checkbox("Sincronizar com gráfico do celular (Spot)", value=True)
 
+# Opção de ajuste manual ou forçado baseada no patamar atual do XAUUSD (~4390)[span_0](start_span)[span_0](end_span)
+modo_conversao = st.sidebar.selectbox("Modo de Escala", ["Automático (Spot Yahoo)", "Manual (Fixar Fator / Alvo)"])
+
 calls_data, puts_data, current_price, df_price, current_expiry = get_gamma_data_v2(ticker_symbol)
 
 if current_expiry and not calls_data.empty and not puts_data.empty:
@@ -96,19 +99,26 @@ if current_expiry and not calls_data.empty and not puts_data.empty:
     multiplier = 1.0
     if converter_escala:
         try:
-            tk_spot = yf.Ticker(spot_ticker)
-            spot_hist = tk_spot.history(period="1d", interval="5m")
-            if spot_hist.empty: 
-                spot_hist = tk_spot.history(period="1d")
-            
-            if not spot_hist.empty:
-                spot_price = spot_hist['Close'].iloc[-1]
-                multiplier = spot_price / current_price
-                st.sidebar.success(f"Conversão Ativa! Escala multiplicada por: {multiplier:.2f}x")
+            if modo_conversao == "Automático (Spot Yahoo)":
+                tk_spot = yf.Ticker(spot_ticker)
+                spot_hist = tk_spot.history(period="1d", interval="5m")
+                if spot_hist.empty: 
+                    spot_hist = tk_spot.history(period="1d")
+                
+                if not spot_hist.empty:
+                    spot_price = spot_hist['Close'].iloc[-1]
+                    multiplier = spot_price / current_price
+                    st.sidebar.success(f"Conversão Auto Ativa! Multiplicador: {multiplier:.2f}x")
+                else:
+                    st.sidebar.warning("Sem dados do Spot. Usando escala padrão.")
             else:
-                st.sidebar.warning("Sem dados do Spot. Usando escala padrão.")
+                # Modo Manual para alinhar diretamente com o patamar desejado (ex: XAUUSD em ~4390)[span_1](start_span)[span_1](end_span)
+                target_spot = st.sidebar.number_input("Preço Alvo XAUUSD (Referência)", value=4390.0)
+                if current_price > 0:
+                    multiplier = target_spot / current_price
+                    st.sidebar.success(f"Conversão Manual Ativa! Alvo: ${target_spot:.2f} (Mult: {multiplier:.2f}x)")
         except:
-            st.sidebar.error("Erro ao buscar Spot. Verifique o ticker.")
+            st.sidebar.error("Erro ao calcular conversão de escala.")
             
     # Escalonando os dados
     current_price = current_price * multiplier
