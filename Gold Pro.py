@@ -11,10 +11,17 @@ from streamlit_autorefresh import st_autorefresh
 st.set_page_config(page_title="GEX PRO - Sinais IA", layout="wide")
 st_autorefresh(interval=60 * 1000, key="datarefresh")
 
-# CSS idêntico ao layout da imagem de referência
+# CSS para customizar o visual dos cards nativos
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #ffffff; }
+    div.stMetric {
+        background-color: #101217;
+        padding: 10px;
+        border-radius: 8px;
+        border: 1px solid #262a34;
+        text-align: center;
+    }
     .signal-card {
         background-color: #161922;
         border-radius: 12px;
@@ -44,8 +51,6 @@ st.markdown("""
         border-radius: 6px;
         font-size: 0.75em;
     }
-    .metric-val-buy { font-size: 1.1em; font-weight: bold; color: #00d4ff; }
-    .metric-label { font-size: 0.65em; color: #718096; text-transform: uppercase; margin-bottom: 2px; }
     .time-stamp { font-size: 0.7em; color: #718096; margin-top: 10px; }
 </style>
 """, unsafe_allow_html=True)
@@ -108,38 +113,34 @@ with tab1:
         stop = entry - 24.0 if direction == "COMPRA" else entry + 24.0
         take = entry + 36.0 if direction == "COMPRA" else entry - 36.0
 
-        # CORREÇÃO APLICADA AQUI: unsafe_allow_html=True incluído
-        st.markdown(f"""
-        <div class="signal-card">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <div>
-                    <span style="font-size: 1.1em; font-weight: bold; color: {color}">{icon} XAUUSD</span>
-                    <span style="color: #888; font-size: 0.8em; margin-left: 5px;">5m</span>
-                    <span class="badge-ativo" style="margin-left: 8px;">Ativo</span>
-                </div>
-                <div>
-                    <span class="badge-percent">{forca_perc}% 🔥</span>
-                    <span class="badge-rr" style="margin-left: 5px;">1:1.5</span>
+        # Container principal do Card
+        with st.container():
+            st.markdown(f"""
+            <div class="signal-card">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <span style="font-size: 1.1em; font-weight: bold; color: {color}">{icon} XAUUSD</span>
+                        <span style="color: #888; font-size: 0.8em; margin-left: 5px;">5m</span>
+                        <span class="badge-ativo" style="margin-left: 8px;">Ativo</span>
+                    </div>
+                    <div>
+                        <span class="badge-percent">{forca_perc}% 🔥</span>
+                        <span class="badge-rr" style="margin-left: 5px;">1:1.5</span>
+                    </div>
                 </div>
             </div>
+            """, unsafe_allow_html=True)
             
-            <div style="display: flex; justify-content: space-between; margin-top: 15px; text-align: center; background: #101217; padding: 10px; border-radius: 8px;">
-                <div style="flex: 1;">
-                    <div class="metric-label">Entrada</div>
-                    <div class="metric-val-buy">{entry:.2f}</div>
-                </div>
-                <div style="flex: 1; border-left: 1px solid #262a34; border-right: 1px solid #262a34;">
-                    <div class="metric-label">Stop</div>
-                    <div style="font-size: 1.1em; font-weight: bold; color: #ff4b4b;">{stop:.2f}</div>
-                </div>
-                <div style="flex: 1;">
-                    <div class="metric-label">Take</div>
-                    <div style="font-size: 1.1em; font-weight: bold; color: #00ff88;">{take:.2f}</div>
-                </div>
-            </div>
-            <div class="time-stamp">10/08 22:50</div>
-        </div>
-        """, unsafe_allow_html=True)
+            # Colunas nativas para Entrada, Stop e Take (substitui o HTML problemático com segurança total)
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("ENTRADA", f"{entry:.2f}")
+            with col2:
+                st.metric("STOP", f"{stop:.2f}")
+            with col3:
+                st.metric("TAKE", f"{take:.2f}")
+                
+            st.markdown(f'<div class="time-stamp">{datetime.now().strftime("%d/%0m %H:%M")}</div>', unsafe_allow_html=True)
 
 with tab2:
     st.info("Nenhum sinal de índice ativo no momento.")
