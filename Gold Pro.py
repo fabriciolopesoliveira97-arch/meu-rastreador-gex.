@@ -1,6 +1,6 @@
 import streamlit as st
-import streamlit.components.v1 as components
 from datetime import datetime
+import os
 import requests
 import pandas as pd
 import numpy as np
@@ -73,19 +73,23 @@ periods = st.sidebar.slider(
 # API key opcional via Streamlit Secrets
 api_key = ""
 try:
-    api_key = st.secrets.get("TWELVEDATA_API_KEY", "")
+    api_key = str(st.secrets.get("TWELVEDATA_API_KEY", "") or "").strip()
 except Exception:
     api_key = ""
+
+# Também aceita variável de ambiente (útil no Streamlit Cloud/Docker).
+if not api_key:
+    api_key = os.getenv("TWELVEDATA_API_KEY", "").strip()
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 📡 Dados reais")
 st.sidebar.info(
-    "Com TWELVEDATA_API_KEY: usa XAU/USD via Twelve Data. "
-    "Sem chave: tenta Yahoo Finance."
+    "Com TWELVEDATA_API_KEY: tenta Twelve Data primeiro. "
+    "Sem chave ou se a API falhar: usa Yahoo Finance diretamente."
 )
 st.sidebar.caption(
-    "Para dados de mercado via Twelve Data, coloque "
-    "`TWELVEDATA_API_KEY` em `.streamlit/secrets.toml`."
+    "Opcional: coloque `TWELVEDATA_API_KEY` em `.streamlit/secrets.toml`. "
+    "Sem chave, o app usa o Yahoo Finance como fallback."
 )
 
 # ---------------- Indicadores ----------------
@@ -110,7 +114,7 @@ def atr(df, period=14):
 def load_twelve_data(interval, outputsize):
     """Obtém candles reais do Twelve Data."""
     if not api_key:
-        return None, None
+        return None, "Twelve Data: API key não configurada."
 
     interval_map = {
         "1min": "1min",
@@ -125,21 +129,30 @@ def load_twelve_data(interval, outputsize):
     params = {
         "symbol": "XAU/USD",
         "interval": interval_map[interval],
-        "outputsize": min(outputsize, 5000),
+        "outputsize": min(int(outputsize), 5000),
         "apikey": api_key,
         "format": "JSON",
         "order": "ASC"
     }
 
     try:
-        r = requests.get(url, params=params, timeout=10)
+        r = requests.get(
+            url,
+            params=params,
+            timeout=15,
+            headers={"User-Agent": "Mozilla/5.0"}
+        )
         r.raise_for_status()
         data = r.json()
 
         if "values" not in data:
-            return None, data.get("message", "Resposta inválida da API.")
+            msg = data.get("message") or data.get("code") or "Resposta inválida da API."
+            return None, f"Twelve Data: {msg}"
 
         df = pd.DataFrame(data["values"])
+        if df.empty:
+            return None, "Twelve Data retornou zero candles."
+
         df["datetime"] = pd.to_datetime(df["datetime"])
         for col in ["open", "high", "low", "close", "volume"]:
             if col in df.columns:
@@ -148,53 +161,98 @@ def load_twelve_data(interval, outputsize):
         if "volume" not in df.columns:
             df["volume"] = np.nan
 
-        return df.set_index("datetime"), "Twelve Data"
+        df = df.dropna(subset=["open", "high", "low", "close"])
+        return df.set_index("datetime").sort_index(), "Twelve Data"
 
+    except requests.RequestException as e:
+        return None, f"Twelve Data — erro de conexão: {e}"
     except Exception as e:
-        return None, f"Erro Twelve Data: {e}"
+        return None, f"Twelve Data — erro: {e}"
+
 
 def load_yahoo_data(interval, outputsize):
-    """Fallback público. Pode ter atraso e não é necessariamente a cotação OANDA."""
+    """
+    Fallback sem yfinance: usa diretamente o endpoint público de gráficos
+    do Yahoo Finance para XAUUSD=X. Isso evita depender da instalação do
+    pacote yfinance no Streamlit Cloud.
+    """
     try:
-        import yfinance as yf
-
-        period_map = {
-            "1min": "5d",
-            "5min": "1mo",
-            "15min": "1mo",
-            "30min": "1mo",
-            "1h": "3mo",
+        range_map = {
+            "1min": "7d",
+            "5min": "60d",
+            "15min": "60d",
+            "30min": "60d",
+            "1h": "2y",
             "4h": "1y"
         }
 
-        # Yahoo não oferece 4h diretamente; baixa 1h e agrega.
         yahoo_interval = "1h" if interval == "4h" else interval
+        params = {
+            "range": range_map[interval],
+            "interval": yahoo_interval,
+            "events": "history",
+            "includeAdjustedClose": "true"
+        }
 
-        df = yf.download(
-            "XAUUSD=X",
-            period=period_map[interval],
-            interval=yahoo_interval,
-            auto_adjust=False,
-            progress=False
-        )
+        payload = None
+        last_error = None
 
-        if df is None or df.empty:
-            return None, "Yahoo Finance sem dados."
+        # Dois hosts aumentam a robustez contra bloqueio/instabilidade.
+        for host in ("query1.finance.yahoo.com", "query2.finance.yahoo.com"):
+            try:
+                url = f"https://{host}/v8/finance/chart/XAUUSD=X"
+                r = requests.get(
+                    url,
+                    params=params,
+                    timeout=15,
+                    headers={"User-Agent": "Mozilla/5.0"}
+                )
+                r.raise_for_status()
+                candidate = r.json()
+                if (candidate.get("chart") or {}).get("result"):
+                    payload = candidate
+                    break
+                last_error = (candidate.get("chart") or {}).get("error")
+            except Exception as e:
+                last_error = e
 
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
+        if payload is None:
+            return None, f"Yahoo Finance: {last_error or 'sem resultado.'}"
 
-        df = df.rename(columns={
-            "Open": "open",
-            "High": "high",
-            "Low": "low",
-            "Close": "close",
-            "Volume": "volume"
+        result = (payload.get("chart") or {}).get("result")
+        if not result:
+            err = (payload.get("chart") or {}).get("error")
+            return None, f"Yahoo Finance: {err or 'sem resultado.'}"
+
+        result = result[0]
+        timestamps = result.get("timestamp", [])
+        quote = (result.get("indicators") or {}).get("quote", [{}])[0]
+
+        if not timestamps or not quote:
+            return None, "Yahoo Finance retornou dados vazios."
+
+        df = pd.DataFrame({
+            "datetime": pd.to_datetime(timestamps, unit="s", utc=True),
+            "open": quote.get("open", []),
+            "high": quote.get("high", []),
+            "low": quote.get("low", []),
+            "close": quote.get("close", []),
+            "volume": quote.get("volume", [])
         })
 
-        cols = ["open", "high", "low", "close", "volume"]
-        df = df[[c for c in cols if c in df.columns]].dropna(subset=["close"])
+        for col in ["open", "high", "low", "close", "volume"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
+        df = (
+            df.dropna(subset=["open", "high", "low", "close"])
+              .set_index("datetime")
+              .sort_index()
+        )
+
+        if df.empty:
+            return None, "Yahoo Finance: nenhum candle válido."
+
+        # Yahoo não oferece 4h diretamente: agrega candles de 1h.
         if interval == "4h":
             df = df.resample("4h").agg({
                 "open": "first",
@@ -202,25 +260,39 @@ def load_yahoo_data(interval, outputsize):
                 "low": "min",
                 "close": "last",
                 "volume": "sum"
-            }).dropna()
+            }).dropna(subset=["open", "high", "low", "close"])
 
-        return df.tail(outputsize), "Yahoo Finance (fallback)"
+        return df.tail(int(outputsize)), "Yahoo Finance (fallback)"
 
+    except requests.RequestException as e:
+        return None, f"Yahoo Finance — erro de conexão: {e}"
     except Exception as e:
-        return None, f"Erro Yahoo Finance: {e}"
+        return None, f"Yahoo Finance — erro: {e}"
+
 
 @st.cache_data(ttl=20)
-def get_market_data(interval, outputsize):
-    # Prioridade: fonte de mercado configurada pelo usuário.
-    if api_key:
+def get_market_data(interval, outputsize, api_key_present):
+    # Prioridade: Twelve Data quando há chave válida.
+    errors = []
+
+    if api_key_present:
         df, source = load_twelve_data(interval, outputsize)
         if df is not None and not df.empty:
             return df, source
+        errors.append(source)
 
-    return load_yahoo_data(interval, outputsize)
+    # Fallback independente de yfinance.
+    df, source = load_yahoo_data(interval, outputsize)
+    if df is not None and not df.empty:
+        if errors:
+            source = f"{source} | Twelve Data indisponível: {errors[-1]}"
+        return df, source
+
+    errors.append(source)
+    return None, " | ".join(errors)
 
 # ---------------- Carrega mercado ----------------
-df, source = get_market_data(timeframe, periods)
+df, source = get_market_data(timeframe, periods, bool(api_key))
 
 st.markdown("### ⚡ Ouro (XAUUSD) — Análise baseada em mercado")
 st.markdown(
@@ -231,9 +303,16 @@ st.markdown(
 )
 
 if df is None or df.empty:
-    st.error(
-        "Não foi possível obter os candles reais. "
-        "Configure TWELVEDATA_API_KEY ou verifique a conexão/instalação do yfinance."
+    st.error("❌ Não foi possível obter candles reais do XAUUSD.")
+    st.warning(
+        "O aplicativo tentou a fonte configurada e também o Yahoo Finance. "
+        "Veja o detalhe abaixo para saber qual serviço bloqueou a conexão."
+    )
+    st.code(str(source))
+    st.info(
+        "Se estiver usando Streamlit Cloud, não é necessário instalar yfinance "
+        "nesta versão. Para Twelve Data, adicione TWELVEDATA_API_KEY em "
+        "Settings → Secrets."
     )
     st.stop()
 
