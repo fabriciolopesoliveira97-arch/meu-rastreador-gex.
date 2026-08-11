@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 from datetime import datetime
 import os
 import requests
@@ -230,6 +231,54 @@ st.markdown(
     "</p>",
     unsafe_allow_html=True
 )
+
+# ---------------- Gráfico TradingView ----------------
+# Visualização independente do TradingView. A análise numérica
+# continua baseada nos candles reais obtidos pela fonte configurada.
+tv_interval_widget = {
+    "1min": "1", "5min": "5", "15min": "15",
+    "30min": "30", "1h": "60", "4h": "240"
+}[timeframe]
+tv_symbol_js = symbol_tv.replace("\\", "").replace("'", "\\'")
+
+components.html(
+    f"""
+    <div style="width:100%;height:620px;background:#0e1117;border-radius:12px;overflow:hidden;">
+      <div id="tv_chart_container" style="width:100%;height:100%;"></div>
+    </div>
+    <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+    <script type="text/javascript">
+      new TradingView.widget({{
+        autosize: true,
+        symbol: "{tv_symbol_js}",
+        interval: "{tv_interval_widget}",
+        timezone: "America/Sao_Paulo",
+        theme: "dark",
+        style: "1",
+        locale: "br",
+        enable_publishing: false,
+        hide_top_toolbar: false,
+        hide_legend: false,
+        save_image: false,
+        allow_symbol_change: false,
+        studies: [
+          "MAExp@tv-basicstudies",
+          "MAExp@tv-basicstudies",
+          "MAExp@tv-basicstudies",
+          "VWAP@tv-basicstudies",
+          "BB@tv-basicstudies",
+          "RSI@tv-basicstudies",
+          "MACD@tv-basicstudies"
+        ],
+        container_id: "tv_chart_container"
+      }});
+    </script>
+    """,
+    height=635,
+    scrolling=False
+)
+
+st.caption("📊 TradingView com EMA 9/21/50, VWAP, Bandas de Bollinger, RSI e MACD. Os níveis dinâmicos de ENTRADA, STOP, TAKE, SUPORTE e RESISTÊNCIA aparecem no gráfico técnico abaixo, calculados sobre os mesmos candles reais.")
 
 if df is None or df.empty:
     st.error("❌ Não foi possível obter candles reais de XAU/USD.")
