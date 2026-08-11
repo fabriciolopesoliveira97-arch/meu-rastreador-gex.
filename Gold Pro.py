@@ -88,15 +88,12 @@ def get_market_data(ticker_symbol):
 st.markdown("### ⚡ Sinais IA em Tempo Real")
 st.markdown("<p style='color: #888; font-size: 0.9em;'>Sinais de trading gerados por IA com alta confluência</p>", unsafe_allow_html=True)
 
-# Abas superiores estilo o app da imagem
 tab1, tab2 = st.tabs(["Sinais IA (5)", "Sinais Índices (0)"])
 
 with tab1:
     st.markdown("<p style='color: #00ff88; font-size: 0.85em; font-weight: bold;'>⚡ Sinais Ativos</p>", unsafe_allow_html=True)
     
-    # Configuração de escala para o Ouro (XAUUSD)
     spot_input = st.sidebar.number_input("Preço de Referência XAUUSD", value=4426.95)
-    
     raw_price, calls, puts, expiry = get_market_data("GLD")
     
     if raw_price > 0:
@@ -111,6 +108,7 @@ with tab1:
         stop = entry - 24.0 if direction == "COMPRA" else entry + 24.0
         take = entry + 36.0 if direction == "COMPRA" else entry - 36.0
 
+        # CORREÇÃO APLICADA AQUI: unsafe_allow_html=True incluído
         st.markdown(f"""
         <div class="signal-card">
             <div style="display: flex; justify-content: space-between; align-items: center;">
