@@ -267,8 +267,23 @@ st.markdown(
 
 if df is None or df.empty:
     st.error(
-        "Não foi possível obter os candles reais. "
-        "Configure TWELVEDATA_API_KEY ou verifique a conexão/instalação do yfinance."
+        "Não foi possível obter os candles reais.\n\n"
+        f"**Motivo reportado pela fonte de dados:** {source}"
+    )
+    st.markdown(
+        """
+        <div class="analysis-box small">
+        Causas mais comuns quando isso acontece só no Streamlit Cloud (e não local):<br>
+        • <b>yfinance ausente do requirements.txt</b> — sem TWELVEDATA_API_KEY,
+        o app depende 100% do yfinance; se o pacote não estiver listado,
+        o import falha silenciosamente e cai aqui.<br>
+        • <b>Yahoo Finance bloqueando o IP do servidor</b> — datacenters
+        (como o do Streamlit Cloud) são frequentemente limitados/bloqueados
+        pelo Yahoo, mesmo funcionando normalmente no seu computador.<br>
+        • <b>Sem TWELVEDATA_API_KEY configurada</b> em Settings → Secrets do app.
+        </div>
+        """,
+        unsafe_allow_html=True
     )
     st.stop()
 
