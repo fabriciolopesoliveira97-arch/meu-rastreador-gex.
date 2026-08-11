@@ -85,11 +85,11 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("### 📡 Dados reais")
 st.sidebar.info(
     "Com TWELVEDATA_API_KEY: tenta Twelve Data primeiro. "
-    "Sem chave ou se a API falhar: usa Yahoo Finance diretamente."
+    "Sem chave ou se a API falhar: usa GC=F (ouro futuro) apenas como fallback."
 )
 st.sidebar.caption(
-    "Opcional: coloque `TWELVEDATA_API_KEY` em `.streamlit/secrets.toml`. "
-    "Sem chave, o app usa o Yahoo Finance como fallback."
+    "Para XAU/USD spot exato, coloque `TWELVEDATA_API_KEY` em `.streamlit/secrets.toml`. "
+    "Sem chave, o app usa GC=F (ouro futuro) como fallback de emergência."
 )
 
 # ---------------- Indicadores ----------------
@@ -172,9 +172,12 @@ def load_twelve_data(interval, outputsize):
 
 def load_yahoo_data(interval, outputsize):
     """
-    Fallback sem yfinance: usa diretamente o endpoint público de gráficos
-    do Yahoo Finance para XAUUSD=X. Isso evita depender da instalação do
-    pacote yfinance no Streamlit Cloud.
+    Fallback de emergência para ouro via Yahoo Finance.
+
+    IMPORTANTE: o Yahoo deixou de responder corretamente para XAUUSD=X em
+    alguns ambientes (HTTP 400). Por isso usamos GC=F (ouro futuro COMEX)
+    apenas como proxy de ouro quando o XAU/USD spot via Twelve Data não
+    estiver disponível. O painel identifica explicitamente a fonte.
     """
     try:
         range_map = {
@@ -182,8 +185,8 @@ def load_yahoo_data(interval, outputsize):
             "5min": "60d",
             "15min": "60d",
             "30min": "60d",
-            "1h": "2y",
-            "4h": "1y"
+            "1h": "730d",
+            "4h": "365d"
         }
 
         yahoo_interval = "1h" if interval == "4h" else interval
@@ -194,78 +197,64 @@ def load_yahoo_data(interval, outputsize):
             "includeAdjustedClose": "true"
         }
 
-        payload = None
-        last_error = None
+        # XAUUSD=X está retornando HTTP 400 em alguns ambientes.
+        # GC=F é o contrato futuro de ouro e serve somente como fallback.
+        symbols = ["GC=F"]
+        errors = []
 
-        # Dois hosts aumentam a robustez contra bloqueio/instabilidade.
-        for host in ("query1.finance.yahoo.com", "query2.finance.yahoo.com"):
-            try:
-                url = f"https://{host}/v8/finance/chart/XAUUSD=X"
-                r = requests.get(
-                    url,
-                    params=params,
-                    timeout=15,
-                    headers={"User-Agent": "Mozilla/5.0"}
-                )
-                r.raise_for_status()
-                candidate = r.json()
-                if (candidate.get("chart") or {}).get("result"):
-                    payload = candidate
-                    break
-                last_error = (candidate.get("chart") or {}).get("error")
-            except Exception as e:
-                last_error = e
+        for symbol in symbols:
+            for host in ("query1.finance.yahoo.com", "query2.finance.yahoo.com"):
+                try:
+                    url = f"https://{host}/v8/finance/chart/{symbol}"
+                    r = requests.get(
+                        url,
+                        params=params,
+                        timeout=15,
+                        headers={
+                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                          "AppleWebKit/537.36 Chrome/131.0 Safari/537.36",
+                            "Accept": "application/json,text/plain,*/*"
+                        }
+                    )
+                    r.raise_for_status()
+                    payload = r.json()
+                    result = (payload.get("chart") or {}).get("result")
+                    if result:
+                        result = result[0]
+                        timestamps = result.get("timestamp", [])
+                        quote = (result.get("indicators") or {}).get("quote", [{}])[0]
+                        if timestamps and quote:
+                            df = pd.DataFrame({
+                                "datetime": pd.to_datetime(timestamps, unit="s", utc=True),
+                                "open": quote.get("open", []),
+                                "high": quote.get("high", []),
+                                "low": quote.get("low", []),
+                                "close": quote.get("close", []),
+                                "volume": quote.get("volume", [])
+                            })
+                            for col in ["open", "high", "low", "close", "volume"]:
+                                df[col] = pd.to_numeric(df[col], errors="coerce")
+                            df = (
+                                df.dropna(subset=["open", "high", "low", "close"])
+                                  .set_index("datetime")
+                                  .sort_index()
+                            )
+                            if not df.empty:
+                                if interval == "4h":
+                                    df = df.resample("4h").agg({
+                                        "open": "first",
+                                        "high": "max",
+                                        "low": "min",
+                                        "close": "last",
+                                        "volume": "sum"
+                                    }).dropna(subset=["open", "high", "low", "close"])
+                                return df.tail(int(outputsize)), "Yahoo Finance — GC=F (ouro futuro, fallback)"
+                    errors.append(f"{symbol}/{host}: resposta sem candles")
+                except Exception as e:
+                    errors.append(f"{symbol}/{host}: {e}")
 
-        if payload is None:
-            return None, f"Yahoo Finance: {last_error or 'sem resultado.'}"
+        return None, "Yahoo Finance: " + " | ".join(errors[-2:])
 
-        result = (payload.get("chart") or {}).get("result")
-        if not result:
-            err = (payload.get("chart") or {}).get("error")
-            return None, f"Yahoo Finance: {err or 'sem resultado.'}"
-
-        result = result[0]
-        timestamps = result.get("timestamp", [])
-        quote = (result.get("indicators") or {}).get("quote", [{}])[0]
-
-        if not timestamps or not quote:
-            return None, "Yahoo Finance retornou dados vazios."
-
-        df = pd.DataFrame({
-            "datetime": pd.to_datetime(timestamps, unit="s", utc=True),
-            "open": quote.get("open", []),
-            "high": quote.get("high", []),
-            "low": quote.get("low", []),
-            "close": quote.get("close", []),
-            "volume": quote.get("volume", [])
-        })
-
-        for col in ["open", "high", "low", "close", "volume"]:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-        df = (
-            df.dropna(subset=["open", "high", "low", "close"])
-              .set_index("datetime")
-              .sort_index()
-        )
-
-        if df.empty:
-            return None, "Yahoo Finance: nenhum candle válido."
-
-        # Yahoo não oferece 4h diretamente: agrega candles de 1h.
-        if interval == "4h":
-            df = df.resample("4h").agg({
-                "open": "first",
-                "high": "max",
-                "low": "min",
-                "close": "last",
-                "volume": "sum"
-            }).dropna(subset=["open", "high", "low", "close"])
-
-        return df.tail(int(outputsize)), "Yahoo Finance (fallback)"
-
-    except requests.RequestException as e:
-        return None, f"Yahoo Finance — erro de conexão: {e}"
     except Exception as e:
         return None, f"Yahoo Finance — erro: {e}"
 
@@ -303,16 +292,16 @@ st.markdown(
 )
 
 if df is None or df.empty:
-    st.error("❌ Não foi possível obter candles reais do XAUUSD.")
+    st.error("❌ Não foi possível obter candles reais para a análise do ouro.")
     st.warning(
-        "O aplicativo tentou a fonte configurada e também o Yahoo Finance. "
+        "O aplicativo tentou o XAU/USD pela Twelve Data e, se não disponível, o ouro futuro GC=F pelo Yahoo Finance. "
         "Veja o detalhe abaixo para saber qual serviço bloqueou a conexão."
     )
     st.code(str(source))
     st.info(
-        "Se estiver usando Streamlit Cloud, não é necessário instalar yfinance "
-        "nesta versão. Para Twelve Data, adicione TWELVEDATA_API_KEY em "
-        "Settings → Secrets."
+        "Para analisar XAU/USD spot exatamente como no TradingView/OANDA, adicione "
+        "TWELVEDATA_API_KEY em Settings → Secrets. Sem a chave, o aplicativo usa "
+        "GC=F apenas como fallback e identifica isso na fonte."
     )
     st.stop()
 
