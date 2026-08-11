@@ -1,4 +1,3 @@
-
 import os
 import streamlit as st
 import yfinance as yf
@@ -46,7 +45,6 @@ st.markdown("""
         font-size: 0.75em;
     }
     .metric-val-buy { font-size: 1.1em; font-weight: bold; color: #00d4ff; }
-    .metric-val-sell { font-size: 1.1em; font-weight: bold; color: #ff4b4b; }
     .metric-label { font-size: 0.65em; color: #718096; text-transform: uppercase; margin-bottom: 2px; }
     .time-stamp { font-size: 0.7em; color: #718096; margin-top: 10px; }
 </style>
@@ -60,14 +58,14 @@ def calculate_gamma(S, K, T, r, sigma):
     return gamma
 
 @st.cache_data(ttl=300)
-def get_market_data(ticker_symbol, scale_mult=1.0):
+def get_market_data(ticker_symbol):
     try:
         tk = yf.Ticker(ticker_symbol)
         df_hist = tk.history(period="1d", interval="5m")
         if df_hist.empty: df_hist = tk.history(period="1d")
         if df_hist.empty: return 0, pd.DataFrame(), pd.DataFrame(), ""
         
-        S = df_hist['Close'].iloc[-1] * scale_mult
+        S = df_hist['Close'].iloc[-1]
         vencimentos = tk.options
         if not vencimentos: return S, pd.DataFrame(), pd.DataFrame(), ""
         
@@ -79,8 +77,8 @@ def get_market_data(ticker_symbol, scale_mult=1.0):
         
         calls = options.calls.copy()
         puts = options.puts.copy()
-        calls['GEX'] = calls.apply(lambda x: calculate_gamma(S, x['strike']*scale_mult, T, r, x['impliedVolatility']) * x['openInterest'] * 100 * S**2 * 0.01, axis=1)
-        puts['GEX'] = puts.apply(lambda x: calculate_gamma(S, x['strike']*scale_mult, T, r, x['impliedVolatility']) * x['openInterest'] * 100 * S**2 * 0.01 * -1, axis=1)
+        calls['GEX'] = calls.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']) * x['openInterest'] * 100 * S**2 * 0.01, axis=1)
+        puts['GEX'] = puts.apply(lambda x: calculate_gamma(S, x['strike'], T, r, x['impliedVolatility']) * x['openInterest'] * 100 * S**2 * 0.01 * -1, axis=1)
         
         return S, calls, puts, expiry
     except:
@@ -96,58 +94,54 @@ tab1, tab2 = st.tabs(["Sinais IA (5)", "Sinais Índices (0)"])
 with tab1:
     st.markdown("<p style='color: #00ff88; font-size: 0.85em; font-weight: bold;'>⚡ Sinais Ativos</p>", unsafe_allow_html=True)
     
-    # Configuração de escala para o Ouro (XAUUSD) alinhar com ~4426
+    # Configuração de escala para o Ouro (XAUUSD)
     spot_input = st.sidebar.number_input("Preço de Referência XAUUSD", value=4426.95)
     
-    # Buscar dados do GLD e converter para o patamar do XAUUSD atual
-raw_price, calls, puts, expiry = get_market_data("GLD")
-if raw_price > 0:
-    mult = spot_input / raw_price
+    raw_price, calls, puts, expiry = get_market_data("GLD")
     
-    # Cálculo dinâmico baseado no GEX real
-    net_gex = (calls['GEX'].sum() + puts['GEX'].sum()) / 10**6 if not calls.empty else 15.4
-    forca_perc = min(max(int(70 + abs(net_gex)), 70), 95) # Força estimada via fluxo
-    
-    direction = "COMPRA" if net_gex >= 0 else "VENDA"
-    icon = "↗️" if direction == "COMPRA" else "↘️"
-    color = "#00ff88" if direction == "COMPRA" else "#ff4b4b"
-    
-    entry = spot_input
-    stop = entry - 24.0 if direction == "COMPRA" else entry + 24.0
-    take = entry + 36.0 if direction == "COMPRA" else entry - 36.0
-
-    # Renderizando o Card idêntico ao da imagem
-    st.markdown(f"""
-    <div class="signal-card">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-            <div>
-                <span style="font-size: 1.1em; font-weight: bold; color: {color}">{icon} XAUUSD</span>
-                <span style="color: #888; font-size: 0.8em; margin-left: 5px;">5m</span>
-                <span class="badge-ativo" style="margin-left: 8px;">Ativo</span>
-            </div>
-            <div>
-                <span class="badge-percent">{forca_perc}% 🔥</span>
-                <span class="badge-rr" style="margin-left: 5px;">1:1.5</span>
-            </div>
-        </div>
+    if raw_price > 0:
+        net_gex = (calls['GEX'].sum() + puts['GEX'].sum()) / 10**6 if not calls.empty else 15.4
+        forca_perc = min(max(int(70 + abs(net_gex)), 70), 95)
         
-        <div style="display: flex; justify-content: space-between; margin-top: 15px; text-align: center; background: #101217; padding: 10px; border-radius: 8px;">
-            <div style="flex: 1;">
-                <div class="metric-label">Entrada</div>
-                <div class="metric-val-buy">{entry:.2f}</div>
+        direction = "COMPRA" if net_gex >= 0 else "VENDA"
+        icon = "↗️" if direction == "COMPRA" else "↘️"
+        color = "#00ff88" if direction == "COMPRA" else "#ff4b4b"
+        
+        entry = spot_input
+        stop = entry - 24.0 if direction == "COMPRA" else entry + 24.0
+        take = entry + 36.0 if direction == "COMPRA" else entry - 36.0
+
+        st.markdown(f"""
+        <div class="signal-card">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <span style="font-size: 1.1em; font-weight: bold; color: {color}">{icon} XAUUSD</span>
+                    <span style="color: #888; font-size: 0.8em; margin-left: 5px;">5m</span>
+                    <span class="badge-ativo" style="margin-left: 8px;">Ativo</span>
+                </div>
+                <div>
+                    <span class="badge-percent">{forca_perc}% 🔥</span>
+                    <span class="badge-rr" style="margin-left: 5px;">1:1.5</span>
+                </div>
             </div>
-            <div style="flex: 1; border-left: 1px solid #262a34; border-right: 1px solid #262a34;">
-                <div class="metric-label">Stop</div>
-                <div style="font-size: 1.1em; font-weight: bold; color: #ff4b4b;">{stop:.2f}</div>
+            
+            <div style="display: flex; justify-content: space-between; margin-top: 15px; text-align: center; background: #101217; padding: 10px; border-radius: 8px;">
+                <div style="flex: 1;">
+                    <div class="metric-label">Entrada</div>
+                    <div class="metric-val-buy">{entry:.2f}</div>
+                </div>
+                <div style="flex: 1; border-left: 1px solid #262a34; border-right: 1px solid #262a34;">
+                    <div class="metric-label">Stop</div>
+                    <div style="font-size: 1.1em; font-weight: bold; color: #ff4b4b;">{stop:.2f}</div>
+                </div>
+                <div style="flex: 1;">
+                    <div class="metric-label">Take</div>
+                    <div style="font-size: 1.1em; font-weight: bold; color: #00ff88;">{take:.2f}</div>
+                </div>
             </div>
-            <div style="flex: 1;">
-                <div class="metric-label">Take</div>
-                <div style="font-size: 1.1em; font-weight: bold; color: #00ff88;">{take:.2f}</div>
-            </div>
+            <div class="time-stamp">10/08 22:50</div>
         </div>
-        <div class="time-stamp">10/08 22:50</div>
-    </div>
-    """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
 
 with tab2:
     st.info("Nenhum sinal de índice ativo no momento.")
