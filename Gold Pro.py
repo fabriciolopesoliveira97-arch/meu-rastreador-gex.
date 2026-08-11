@@ -12,7 +12,7 @@ from streamlit_autorefresh import st_autorefresh
 # ============================================================
 # Dados:
 # 1) Twelve Data, se TWELVEDATA_API_KEY estiver em st.secrets
-# 2) Yahoo Finance como fallback (XAUUSD=X)
+# 2) Sem Yahoo/GC=F: não misturamos ouro futuro com XAU/USD spot
 #
 # IMPORTANTE:
 # O TradingView incorporado é apenas visual. O painel NÃO "lê"
@@ -70,26 +70,45 @@ periods = st.sidebar.slider(
     min_value=100, max_value=1000, value=300, step=50
 )
 
-# API key opcional via Streamlit Secrets
-api_key = ""
+# ------------------------------------------------------------
+# CHAVE DA TWELVE DATA
+# Prioridade: campo da tela > Secrets > variável de ambiente.
+# Sem chave, tentamos a chave DEMO apenas para verificar se o
+# símbolo XAU/USD está liberado no ambiente. Não inventamos candles.
+# ------------------------------------------------------------
+secret_key = ""
 try:
-    api_key = str(st.secrets.get("TWELVEDATA_API_KEY", "") or "").strip()
+    secret_key = str(st.secrets.get("TWELVEDATA_API_KEY", "") or "").strip()
 except Exception:
-    api_key = ""
+    secret_key = ""
 
-# Também aceita variável de ambiente (útil no Streamlit Cloud/Docker).
-if not api_key:
-    api_key = os.getenv("TWELVEDATA_API_KEY", "").strip()
+env_key = os.getenv("TWELVEDATA_API_KEY", "").strip()
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 📡 Dados reais")
-st.sidebar.info(
-    "Com TWELVEDATA_API_KEY: tenta Twelve Data primeiro. "
-    "Sem chave ou se a API falhar: usa GC=F (ouro futuro) apenas como fallback."
-)
+st.sidebar.markdown("### 📡 Fonte dos candles")
+manual_key = st.sidebar.text_input(
+    "Twelve Data API Key (opcional)",
+    value="",
+    type="password",
+    placeholder="Cole sua chave aqui",
+    help="A chave não é exibida na tela. Em produção, prefira Settings → Secrets."
+).strip()
+
+api_key = manual_key or secret_key or env_key
+using_demo = not bool(api_key)
+request_key = api_key if api_key else "demo"
+
+if api_key:
+    st.sidebar.success("✅ Twelve Data configurada")
+else:
+    st.sidebar.info(
+        "Sem chave configurada. O app vai testar a chave DEMO da Twelve Data. "
+        "Se XAU/USD não estiver liberado para DEMO, será necessário informar sua chave."
+    )
+
 st.sidebar.caption(
-    "Para XAU/USD spot exato, coloque `TWELVEDATA_API_KEY` em `.streamlit/secrets.toml`. "
-    "Sem chave, o app usa GC=F (ouro futuro) como fallback de emergência."
+    "Para XAU/USD spot e candles reais, a Twelve Data disponibiliza XAU/USD como símbolo de ouro spot; "
+    "a chave pessoal é necessária quando o símbolo não estiver disponível no acesso DEMO."
 )
 
 # ---------------- Indicadores ----------------
@@ -111,10 +130,12 @@ def atr(df, period=14):
     ], axis=1).max(axis=1)
     return tr.ewm(alpha=1/period, adjust=False).mean()
 
-def load_twelve_data(interval, outputsize):
+def load_twelve_data(interval, outputsize, auth_key=None, demo=False):
     """Obtém candles reais do Twelve Data."""
-    if not api_key:
-        return None, "Twelve Data: API key não configurada."
+    # Sempre há uma tentativa: chave pessoal ou DEMO.
+    active_key = auth_key or request_key
+    if not active_key:
+        return None, "Twelve Data: nenhuma chave disponível."
 
     interval_map = {
         "1min": "1min",
@@ -130,23 +151,31 @@ def load_twelve_data(interval, outputsize):
         "symbol": "XAU/USD",
         "interval": interval_map[interval],
         "outputsize": min(int(outputsize), 5000),
-        "apikey": api_key,
-        "format": "JSON",
-        "order": "ASC"
+        "apikey": active_key
     }
 
     try:
         r = requests.get(
             url,
             params=params,
-            timeout=15,
-            headers={"User-Agent": "Mozilla/5.0"}
+            timeout=20,
+            headers={
+                "Authorization": f"apikey {active_key}",
+                "User-Agent": "Mozilla/5.0"
+            }
         )
-        r.raise_for_status()
-        data = r.json()
+
+        try:
+            data = r.json()
+        except Exception:
+            data = {}
+
+        if r.status_code >= 400:
+            msg = data.get("message") or data.get("code") or r.text[:300]
+            return None, f"Twelve Data HTTP {r.status_code}: {msg}"
 
         if "values" not in data:
-            msg = data.get("message") or data.get("code") or "Resposta inválida da API."
+            msg = data.get("message") or data.get("code") or "Resposta sem candles."
             return None, f"Twelve Data: {msg}"
 
         df = pd.DataFrame(data["values"])
@@ -162,7 +191,8 @@ def load_twelve_data(interval, outputsize):
             df["volume"] = np.nan
 
         df = df.dropna(subset=["open", "high", "low", "close"])
-        return df.set_index("datetime").sort_index(), "Twelve Data"
+        source_name = "Twelve Data" + (" — DEMO" if demo else " — API Key")
+        return df.set_index("datetime").sort_index(), source_name
 
     except requests.RequestException as e:
         return None, f"Twelve Data — erro de conexão: {e}"
@@ -172,116 +202,26 @@ def load_twelve_data(interval, outputsize):
 
 def load_yahoo_data(interval, outputsize):
     """
-    Fallback de emergência para ouro via Yahoo Finance.
-
-    IMPORTANTE: o Yahoo deixou de responder corretamente para XAUUSD=X em
-    alguns ambientes (HTTP 400). Por isso usamos GC=F (ouro futuro COMEX)
-    apenas como proxy de ouro quando o XAU/USD spot via Twelve Data não
-    estiver disponível. O painel identifica explicitamente a fonte.
+    Yahoo não é usado como fonte principal nesta versão.
+    O erro HTTP 400 do Yahoo foi a causa do bloqueio observado no app.
+    Mantemos a função apenas para compatibilidade e retornamos uma mensagem
+    clara em vez de tentar gerar uma análise com uma fonte diferente do XAU/USD.
     """
-    try:
-        range_map = {
-            "1min": "7d",
-            "5min": "60d",
-            "15min": "60d",
-            "30min": "60d",
-            "1h": "730d",
-            "4h": "365d"
-        }
-
-        yahoo_interval = "1h" if interval == "4h" else interval
-        params = {
-            "range": range_map[interval],
-            "interval": yahoo_interval,
-            "events": "history",
-            "includeAdjustedClose": "true"
-        }
-
-        # XAUUSD=X está retornando HTTP 400 em alguns ambientes.
-        # GC=F é o contrato futuro de ouro e serve somente como fallback.
-        symbols = ["GC=F"]
-        errors = []
-
-        for symbol in symbols:
-            for host in ("query1.finance.yahoo.com", "query2.finance.yahoo.com"):
-                try:
-                    url = f"https://{host}/v8/finance/chart/{symbol}"
-                    r = requests.get(
-                        url,
-                        params=params,
-                        timeout=15,
-                        headers={
-                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                                          "AppleWebKit/537.36 Chrome/131.0 Safari/537.36",
-                            "Accept": "application/json,text/plain,*/*"
-                        }
-                    )
-                    r.raise_for_status()
-                    payload = r.json()
-                    result = (payload.get("chart") or {}).get("result")
-                    if result:
-                        result = result[0]
-                        timestamps = result.get("timestamp", [])
-                        quote = (result.get("indicators") or {}).get("quote", [{}])[0]
-                        if timestamps and quote:
-                            df = pd.DataFrame({
-                                "datetime": pd.to_datetime(timestamps, unit="s", utc=True),
-                                "open": quote.get("open", []),
-                                "high": quote.get("high", []),
-                                "low": quote.get("low", []),
-                                "close": quote.get("close", []),
-                                "volume": quote.get("volume", [])
-                            })
-                            for col in ["open", "high", "low", "close", "volume"]:
-                                df[col] = pd.to_numeric(df[col], errors="coerce")
-                            df = (
-                                df.dropna(subset=["open", "high", "low", "close"])
-                                  .set_index("datetime")
-                                  .sort_index()
-                            )
-                            if not df.empty:
-                                if interval == "4h":
-                                    df = df.resample("4h").agg({
-                                        "open": "first",
-                                        "high": "max",
-                                        "low": "min",
-                                        "close": "last",
-                                        "volume": "sum"
-                                    }).dropna(subset=["open", "high", "low", "close"])
-                                return df.tail(int(outputsize)), "Yahoo Finance — GC=F (ouro futuro, fallback)"
-                    errors.append(f"{symbol}/{host}: resposta sem candles")
-                except Exception as e:
-                    errors.append(f"{symbol}/{host}: {e}")
-
-        return None, "Yahoo Finance: " + " | ".join(errors[-2:])
-
-    except Exception as e:
-        return None, f"Yahoo Finance — erro: {e}"
+    return None, "Yahoo Finance desativado para XAU/USD nesta versão (evita HTTP 400 e não mistura GC=F com XAU/USD)."
 
 
-@st.cache_data(ttl=20)
-def get_market_data(interval, outputsize, api_key_present):
-    # Prioridade: Twelve Data quando há chave válida.
-    errors = []
-
-    if api_key_present:
-        df, source = load_twelve_data(interval, outputsize)
-        if df is not None and not df.empty:
-            return df, source
-        errors.append(source)
-
-    # Fallback independente de yfinance.
-    df, source = load_yahoo_data(interval, outputsize)
+@st.cache_data(ttl=20, show_spinner=False)
+def get_market_data(interval, outputsize, auth_key, demo_mode):
+    # A única fonte aceita para a análise principal é XAU/USD spot da Twelve Data.
+    # Isso impede que o painel mostre GC=F como se fosse XAUUSD.
+    df, source = load_twelve_data(interval, outputsize, auth_key=auth_key, demo=demo_mode)
     if df is not None and not df.empty:
-        if errors:
-            source = f"{source} | Twelve Data indisponível: {errors[-1]}"
         return df, source
 
-    errors.append(source)
-    return None, " | ".join(errors)
+    return None, source
 
 # ---------------- Carrega mercado ----------------
-df, source = get_market_data(timeframe, periods, bool(api_key))
+df, source = get_market_data(timeframe, periods, api_key, using_demo)
 
 st.markdown("### ⚡ Ouro (XAUUSD) — Análise baseada em mercado")
 st.markdown(
@@ -292,17 +232,19 @@ st.markdown(
 )
 
 if df is None or df.empty:
-    st.error("❌ Não foi possível obter candles reais para a análise do ouro.")
-    st.warning(
-        "O aplicativo tentou o XAU/USD pela Twelve Data e, se não disponível, o ouro futuro GC=F pelo Yahoo Finance. "
-        "Veja o detalhe abaixo para saber qual serviço bloqueou a conexão."
-    )
-    st.code(str(source))
-    st.info(
-        "Para analisar XAU/USD spot exatamente como no TradingView/OANDA, adicione "
-        "TWELVEDATA_API_KEY em Settings → Secrets. Sem a chave, o aplicativo usa "
-        "GC=F apenas como fallback e identifica isso na fonte."
-    )
+    st.error("❌ Não foi possível obter candles reais de XAU/USD.")
+    st.warning(str(source))
+    if using_demo:
+        st.info(
+            "O app já tentou automaticamente a chave DEMO da Twelve Data. "
+            "Se ela não liberar XAU/USD, cole sua chave no campo 'Twelve Data API Key' "
+            "na barra lateral ou coloque TWELVEDATA_API_KEY em Settings → Secrets."
+        )
+    else:
+        st.info(
+            "A chave foi encontrada, mas a Twelve Data recusou/limitou o pedido. "
+            "Confira se a chave está ativa e se XAU/USD está disponível no seu plano."
+        )
     st.stop()
 
 # ---------------- Cálculos ----------------
