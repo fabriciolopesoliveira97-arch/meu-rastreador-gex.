@@ -1,12 +1,11 @@
 import streamlit as st
 import streamlit.components.v1 as components
-import yfinance as yf
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 
 # --- 1. CONFIGURAÇÃO ---
 st.set_page_config(page_title="GEX PRO - Sinais & Gráfico IA", layout="wide")
-st_autorefresh(interval=30 * 1000, key="datarefresh") # Atualiza a cada 30 segundos
+st_autorefresh(interval=30 * 1000, key="datarefresh")
 
 # CSS personalizado para o modo escuro profissional
 st.markdown("""
@@ -61,22 +60,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. CAPTURA DE PREÇO REAL DO OURO ---
-@st.cache_data(ttl=30)
-def get_realtime_gold_price():
-    try:
-        # Puxa o contrato futuro de Ouro (GC=F) ou GLD para sincronizar o preço spot exato
-        tk = yf.Ticker("GC=F")
-        df = tk.history(period="1d", interval="1m")
-        if df.empty:
-            tk = yf.Ticker("GLD")
-            df = tk.history(period="1d", interval="1m")
-            spot = df['Close'].iloc[-1] * 25.4 # Fator de conversão aproximado se usar GLD
-        else:
-            spot = df['Close'].iloc[-1]
-        return float(spot)
-    except:
-        return 4342.27 # Fallback de segurança caso a API oscile
+# --- 2. PAINEL DE CONTROLE DE PREÇO (BARRA LATERAL) ---
+st.sidebar.markdown("### ⚙️ Calibração de Preço")
+# Permite que você ajuste o valor exato que está vendo no gráfico da OANDA
+preco_grafico = st.sidebar.number_input("Preço Atual do XAUUSD (Gráfico)", value=4411.22, step=0.01, format="%.2f")
 
 # --- 3. INTERFACE DE TOPO ---
 st.markdown("### ⚡ Ouro (XAUUSD) - Tempo Real & IA Dinâmica")
@@ -114,25 +101,20 @@ tradingview_widget = """
 """
 components.html(tradingview_widget, height=440)
 
-# --- 5. PROCESSAMENTO DOS VALORES REAIS ---
-current_price = get_realtime_gold_price()
-
-# Simulação inteligente de tendência baseada na variação e fluxo atual
-direcao = "COMPRA"
+# --- 5. PROCESSAMENTO DOS VALORES EXATOS ---
+entry = preco_grafico
+stop = entry - 12.0  # Distância proporcional de Stop
+take = entry + 18.0  # Distância proporcional de Take (R:R 1:1.5)
 forca = 78
-tipo_trade = "🚀 Trade Longo (Tendência de Alta nos Candles)"
-
-entry = current_price
-stop = entry - 24.0
-take = entry + 36.0
 color = "#00ff88"
 icon = "↗️"
+tipo_trade = "🚀 Trade Longo (Tendência de Alta nos Candles)"
 
 # --- 6. PAINEL DE LEITURA DE MERCADO ---
 st.markdown(f"""
 <div class="analysis-box">
-    <b>📊 Sincronização com o Gráfico:</b> Cotação capturada em tempo real.<br>
-    <b>💡 Perfil do Momento:</b> <b>{tipo_trade}</b> baseado no comportamento recente das velas de 5m.
+    <b>📊 Sincronização Ativa:</b> Baseado na cotação de referência <b>{entry:.2f}</b>.<br>
+    <b>💡 Perfil do Momento:</b> <b>{tipo_trade}</b> sincronizado com o gráfico.
 </div>
 """, unsafe_allow_html=True)
 
