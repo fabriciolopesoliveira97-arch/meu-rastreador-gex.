@@ -245,17 +245,27 @@ def load_yahoo_data(interval, outputsize):
         return None, f"Erro Yahoo Finance: {e}"
 
 @st.cache_data(ttl=20)
-def get_market_data(interval, outputsize):
-    # Prioridade: fonte de mercado configurada pelo usuário.
-    if api_key:
+def get_market_data(interval, outputsize, key):
+    debug_lines = []
+
+    if key:
+        debug_lines.append("TWELVEDATA_API_KEY configurada — tentando Twelve Data primeiro.")
         df, source = load_twelve_data(interval, outputsize)
         if df is not None and not df.empty:
-            return df, source
+            return df, source, " ".join(debug_lines)
+        debug_lines.append(f"Twelve Data falhou: {source}")
+    else:
+        debug_lines.append(
+            "TWELVEDATA_API_KEY NÃO configurada em Settings → Secrets "
+            "— usando Yahoo Finance diretamente (fonte menos confiável em nuvem)."
+        )
 
-    return load_yahoo_data(interval, outputsize)
+    df, source = load_yahoo_data(interval, outputsize)
+    debug_lines.append(f"Yahoo Finance: {source}")
+    return df, source, " | ".join(debug_lines)
 
 # ---------------- Carrega mercado ----------------
-df, source = get_market_data(timeframe, periods)
+df, source, debug_info = get_market_data(timeframe, periods, api_key)
 
 st.markdown("### ⚡ Ouro (XAUUSD) — Análise baseada em mercado")
 st.markdown(
@@ -271,6 +281,14 @@ if df is None or df.empty:
         f"**Motivo reportado pela fonte de dados:** {source}"
     )
     st.markdown(
+        f"""
+        <div class="analysis-box small">
+        <b>📋 Diagnóstico completo:</b><br>{debug_info}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    st.markdown(
         """
         <div class="analysis-box small">
         Causas mais comuns quando isso acontece só no Streamlit Cloud (e não local):<br>
@@ -279,8 +297,12 @@ if df is None or df.empty:
         o import falha silenciosamente e cai aqui.<br>
         • <b>Yahoo Finance bloqueando o IP do servidor</b> — datacenters
         (como o do Streamlit Cloud) são frequentemente limitados/bloqueados
-        pelo Yahoo, mesmo funcionando normalmente no seu computador.<br>
-        • <b>Sem TWELVEDATA_API_KEY configurada</b> em Settings → Secrets do app.
+        pelo Yahoo, mesmo funcionando normalmente no seu computador. Isso é
+        muito comum e não tem correção do lado do código — a solução é
+        usar o Twelve Data.<br>
+        • <b>Sem TWELVEDATA_API_KEY configurada</b> em Settings → Secrets do app
+        — esta é a causa mais provável se o diagnóstico acima disser
+        "NÃO configurada".
         </div>
         """,
         unsafe_allow_html=True
