@@ -107,41 +107,6 @@ def atr(df, period=14):
     ], axis=1).max(axis=1)
     return tr.ewm(alpha=1/period, adjust=False).mean()
 
-def adx(df, period=14):
-    """
-    ADX / +DI / -DI (Wilder).
-    ADX mede a FORÇA da tendência (não a direção) — é o filtro de
-    volatilidade/ruído: abaixo de ~20-25 o mercado está de lado e
-    cruzamentos de médias tendem a ser "sinais falsos".
-    +DI/-DI mostram QUEM está no comando (compradores vs vendedores),
-    usado como confirmação de direção do sinal.
-    """
-    high, low, close = df["high"], df["low"], df["close"]
-
-    up_move = high.diff()
-    down_move = -low.diff()
-
-    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
-    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
-
-    prev_close = close.shift(1)
-    tr = pd.concat([
-        high - low,
-        (high - prev_close).abs(),
-        (low - prev_close).abs()
-    ], axis=1).max(axis=1)
-
-    atr_w = tr.ewm(alpha=1/period, adjust=False).mean()
-
-    plus_di = 100 * pd.Series(plus_dm, index=df.index).ewm(alpha=1/period, adjust=False).mean() / atr_w.replace(0, np.nan)
-    minus_di = 100 * pd.Series(minus_dm, index=df.index).ewm(alpha=1/period, adjust=False).mean() / atr_w.replace(0, np.nan)
-
-    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
-    adx_val = dx.ewm(alpha=1/period, adjust=False).mean()
-
-    return adx_val, plus_di, minus_di
-
-
 def load_twelve_data(interval, outputsize):
     """Obtém candles reais do Twelve Data."""
     if not api_key:
@@ -245,27 +210,17 @@ def load_yahoo_data(interval, outputsize):
         return None, f"Erro Yahoo Finance: {e}"
 
 @st.cache_data(ttl=20)
-def get_market_data(interval, outputsize, key):
-    debug_lines = []
-
-    if key:
-        debug_lines.append("TWELVEDATA_API_KEY configurada — tentando Twelve Data primeiro.")
+def get_market_data(interval, outputsize):
+    # Prioridade: fonte de mercado configurada pelo usuário.
+    if api_key:
         df, source = load_twelve_data(interval, outputsize)
         if df is not None and not df.empty:
-            return df, source, " ".join(debug_lines)
-        debug_lines.append(f"Twelve Data falhou: {source}")
-    else:
-        debug_lines.append(
-            "TWELVEDATA_API_KEY NÃO configurada em Settings → Secrets "
-            "— usando Yahoo Finance diretamente (fonte menos confiável em nuvem)."
-        )
+            return df, source
 
-    df, source = load_yahoo_data(interval, outputsize)
-    debug_lines.append(f"Yahoo Finance: {source}")
-    return df, source, " | ".join(debug_lines)
+    return load_yahoo_data(interval, outputsize)
 
 # ---------------- Carrega mercado ----------------
-df, source, debug_info = get_market_data(timeframe, periods, api_key)
+df, source = get_market_data(timeframe, periods)
 
 st.markdown("### ⚡ Ouro (XAUUSD) — Análise baseada em mercado")
 st.markdown(
@@ -277,74 +232,10 @@ st.markdown(
 
 if df is None or df.empty:
     st.error(
-        "Não foi possível obter os candles reais.\n\n"
-        f"**Motivo reportado pela fonte de dados:** {source}"
-    )
-    st.markdown(
-        f"""
-        <div class="analysis-box small">
-        <b>📋 Diagnóstico completo:</b><br>{debug_info}
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-    st.markdown(
-        """
-        <div class="analysis-box small">
-        Causas mais comuns quando isso acontece só no Streamlit Cloud (e não local):<br>
-        • <b>yfinance ausente do requirements.txt</b> — sem TWELVEDATA_API_KEY,
-        o app depende 100% do yfinance; se o pacote não estiver listado,
-        o import falha silenciosamente e cai aqui.<br>
-        • <b>Yahoo Finance bloqueando o IP do servidor</b> — datacenters
-        (como o do Streamlit Cloud) são frequentemente limitados/bloqueados
-        pelo Yahoo, mesmo funcionando normalmente no seu computador. Isso é
-        muito comum e não tem correção do lado do código — a solução é
-        usar o Twelve Data.<br>
-        • <b>Sem TWELVEDATA_API_KEY configurada</b> em Settings → Secrets do app
-        — esta é a causa mais provável se o diagnóstico acima disser
-        "NÃO configurada".
-        </div>
-        """,
-        unsafe_allow_html=True
+        "Não foi possível obter os candles reais. "
+        "Configure TWELVEDATA_API_KEY ou verifique a conexão/instalação do yfinance."
     )
     st.stop()
-
-# ---------------- Widget TradingView (referência visual) ----------------
-# Isso é só o gráfico visual da corretora/TradingView, para conferência
-# manual. Ele NÃO alimenta os cálculos do painel — os candles reais
-# usados no score, entrada, stop e take vêm de get_market_data()
-# (Twelve Data / Yahoo) e são plotados separadamente no gráfico Plotly
-# logo abaixo, para não haver dúvida de qual fonte gerou cada nível.
-st.markdown("#### 📺 TradingView")
-tv_widget_html = f"""
-<div class="tradingview-widget-container">
-  <div id="tradingview_chart"></div>
-  <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-  <script type="text/javascript">
-  new TradingView.widget({{
-    "width": "100%",
-    "height": 500,
-    "symbol": "{symbol_tv}",
-    "interval": "{tv_interval}",
-    "timezone": "Etc/UTC",
-    "theme": "dark",
-    "style": "1",
-    "locale": "br",
-    "toolbar_bg": "#0e1117",
-    "enable_publishing": false,
-    "hide_top_toolbar": false,
-    "allow_symbol_change": true,
-    "container_id": "tradingview_chart"
-  }});
-  </script>
-</div>
-"""
-components.html(tv_widget_html, height=520)
-st.caption(
-    "Gráfico do TradingView é apenas visual/conferência. "
-    "O painel abaixo (score, entrada, stop, take) usa os candles reais "
-    "obtidos por API, não os do iframe."
-)
 
 # ---------------- Cálculos ----------------
 df["ema9"] = df["close"].ewm(span=9, adjust=False).mean()
@@ -352,7 +243,6 @@ df["ema21"] = df["close"].ewm(span=21, adjust=False).mean()
 df["ema50"] = df["close"].ewm(span=50, adjust=False).mean()
 df["rsi"] = rsi(df["close"], 14)
 df["atr"] = atr(df, 14)
-df["adx"], df["plus_di"], df["minus_di"] = adx(df, 14)
 
 # VWAP intraday (reset por sessão UTC) e Bandas de Bollinger
 typical = (df["high"] + df["low"] + df["close"]) / 3
@@ -385,7 +275,6 @@ ema26 = df["close"].ewm(span=26, adjust=False).mean()
 df["macd"] = ema12 - ema26
 df["macd_signal"] = df["macd"].ewm(span=9, adjust=False).mean()
 df["macd_hist"] = df["macd"] - df["macd_signal"]
-df["macd_hist_slope"] = df["macd_hist"].diff()  # momentum acelerando (+) ou perdendo força (-)
 
 # Volume relativo
 vol_ma = df["volume"].rolling(20).mean()
@@ -411,124 +300,56 @@ rsi_value = float(last["rsi"])
 structure_lookback = min(30, len(df))
 structure_high = float(df["high"].iloc[-structure_lookback:-1].max())
 structure_low = float(df["low"].iloc[-structure_lookback:-1].min())
-# Rompimento exige fechamento além do nível por um buffer de ATR
-# (não apenas um pavio) e que o candle anterior já estivesse próximo
-# do nível — filtra "fakeouts" de 1 candle isolado.
-breakout_buffer = atr_value * 0.15
-close_prev = float(df["close"].iloc[-2]) if len(df) > 1 else price
-breakout_up = (price > structure_high + breakout_buffer) and (close_prev > structure_high - breakout_buffer)
-breakout_down = (price < structure_low - breakout_buffer) and (close_prev < structure_low + breakout_buffer)
+breakout_up = price > structure_high
+breakout_down = price < structure_low
 
 # ---------------- Score de tendência ----------------
-# Correção do modelo anterior: EMA9>EMA21, EMA21>EMA50 e Preço>EMA50
-# são quase sempre a MESMA informação (alinhamento de médias), então
-# somar 20+20+20 para isso triplicava o peso de um único fato e fazia
-# o score oscilar junto com o menor ruído de preço. Aqui esse bloco
-# vira UM componente (peso 25), e o espaço restante vai para filtros
-# de qualidade (ADX, DI, persistência) em vez de "mais um cruzamento".
-
-adx_value = float(last["adx"]) if not np.isnan(last["adx"]) else np.nan
-plus_di_value = float(last["plus_di"]) if not np.isnan(last["plus_di"]) else np.nan
-minus_di_value = float(last["minus_di"]) if not np.isnan(last["minus_di"]) else np.nan
-macd_hist_slope = float(last["macd_hist_slope"]) if not np.isnan(last["macd_hist_slope"]) else 0.0
-
 score = 0
 
-# 1) Estrutura de médias — peso único (não triplicado)
-if last["ema9"] > last["ema21"] > last["ema50"]:
-    score += 25
-elif last["ema9"] < last["ema21"] < last["ema50"]:
-    score -= 25
-elif last["ema9"] > last["ema21"]:
-    score += 10  # alinhamento parcial de alta
-elif last["ema9"] < last["ema21"]:
-    score -= 10  # alinhamento parcial de baixa
-
-# 2) Momentum: cruzamento do MACD + aceleração do histograma
-if last["macd"] > last["macd_signal"]:
-    score += 15
-    if macd_hist_slope > 0:
-        score += 5  # momentum ganhando força, não só cruzado
+if last["ema9"] > last["ema21"]:
+    score += 20
 else:
-    score -= 15
-    if macd_hist_slope < 0:
-        score -= 5
+    score -= 20
 
-# 3) RSI — zona de momentum, com desconto em extremos (risco de exaustão)
-if 50 <= rsi_value < 70:
-    score += 15
-elif rsi_value >= 70:
-    score += 5   # sobrecomprado: a favor da alta, mas risco de reversão
-elif 30 < rsi_value <= 50:
-    score -= 15
-elif rsi_value <= 30:
-    score -= 5   # sobrevendido: a favor da baixa, mas risco de reversão
+if last["ema21"] > last["ema50"]:
+    score += 20
+else:
+    score -= 20
 
-# 4) Preço vs VWAP (referência de valor justo intradiário)
-if not np.isnan(last.get("vwap", np.nan)):
-    if price > last["vwap"]:
-        score += 10
-    else:
-        score -= 10
+if last["macd"] > last["macd_signal"]:
+    score += 20
+else:
+    score -= 20
 
-# 5) Rompimento estrutural já confirmado por fechamento (ver bloco acima)
+if rsi_value >= 55:
+    score += 20
+elif rsi_value <= 45:
+    score -= 20
+
+if price > last["ema50"]:
+    score += 20
+else:
+    score -= 20
+
+# Estrutura recebe peso adicional sem deixar um único rompimento dominar o sinal.
 if breakout_up:
     score += 15
 elif breakout_down:
     score -= 15
 
+if not np.isnan(last.get("vwap", np.nan)):
+    if price > last["vwap"]:
+        score += 5
+    else:
+        score -= 5
+
 score = max(-100, min(100, score))
-raw_direction = 1 if score > 0 else (-1 if score < 0 else 0)
 
-# ---------------- Filtro 1: ADX (força de tendência / regime de mercado) ----------------
-# Este é o filtro central contra ruído: cruzamentos de médias e RSI
-# geram sinais falsos constantes quando o mercado está de lado. Só
-# deixamos o sinal "passar" quando o ADX mostra que existe tendência
-# de fato — e exigimos score mais alto quando a tendência é fraca.
-adx_threshold_score = 40
-if np.isnan(adx_value):
-    adx_regime = "indisponível (poucos candles)"
-    trend_ok = True
-elif adx_value < 18:
-    adx_regime = "lateralizado — mercado sem tendência"
-    trend_ok = False
-elif adx_value < 25:
-    adx_regime = "tendência fraca"
-    trend_ok = True
-    adx_threshold_score = 55
-else:
-    adx_regime = "tendência confirmada"
-    trend_ok = True
-
-# ---------------- Filtro 2: confirmação de fluxo via DI+/DI- ----------------
-# O +DI/-DI mostra quem está no controle do fluxo de ordens. Se o
-# score aponta para compra mas o -DI ainda domina (ou vice-versa),
-# tratamos como sinal ainda não confirmado pelo fluxo real.
-if not np.isnan(plus_di_value) and not np.isnan(minus_di_value) and raw_direction != 0:
-    di_direction = 1 if plus_di_value > minus_di_value else -1
-    di_agrees = di_direction == raw_direction
-else:
-    di_agrees = True  # dado insuficiente: não bloqueia sozinho
-
-# ---------------- Filtro 3: persistência entre candles ----------------
-# Exige que o viés (médias + MACD) já estivesse na mesma direção nos
-# últimos candles fechados, não só no candle atual — reduz o
-# "flip-flop" de sinal causado por 1 candle isolado de ruído
-# (importante aqui porque o painel se autoatualiza a cada 30s).
-persist_window = min(3, len(df))
-persist_dirs = []
-for i in range(-persist_window, 0):
-    row = df.iloc[i]
-    d = (1 if row["ema9"] > row["ema21"] else -1) + (1 if row["macd"] > row["macd_signal"] else -1)
-    persist_dirs.append(1 if d > 0 else (-1 if d < 0 else 0))
-persistence_ok = raw_direction != 0 and all(d == raw_direction for d in persist_dirs)
-
-# ---------------- Decisão final ----------------
-if trend_ok and di_agrees and persistence_ok and score >= adx_threshold_score:
+if score >= 40:
     signal = "COMPRA"
     color = "#00ff88"
     icon = "↗️"
-elif trend_ok and di_agrees and persistence_ok and score <= -adx_threshold_score:
+elif score <= -40:
     signal = "VENDA"
     color = "#ff5c6c"
     icon = "↘️"
@@ -537,14 +358,7 @@ else:
     color = "#f5c451"
     icon = "⏸️"
 
-# Confiança agora reflete não só a magnitude do score, mas também a
-# força real da tendência (ADX) e a participação de volume — um
-# score alto em mercado lateralizado ou com volume fraco não deveria
-# gerar a mesma confiança que um score alto em tendência forte.
-adx_factor = 0.5 if np.isnan(adx_value) else min(1.0, adx_value / 40)
-volume_factor = 1.0 if np.isnan(volume_ratio) else min(1.1, max(0.85, volume_ratio))
-confidence = (50 + abs(score) * 0.45) * (0.7 + 0.3 * adx_factor) * volume_factor
-confidence = min(95, max(30, confidence))
+confidence = min(95, max(50, 50 + abs(score) * 0.45))
 
 # ---------------- Entrada / SL / TP ----------------
 # O risco é derivado do ATR, e não de um número fixo.
@@ -735,7 +549,7 @@ with p3:
 # ---------------- Indicadores ----------------
 st.markdown("#### 🔎 Indicadores")
 
-i1, i2, i3, i4 = st.columns(4)
+i1, i2, i3 = st.columns(3)
 
 with i1:
     ema_trend = "Alta" if last["ema9"] > last["ema21"] > last["ema50"] else \
@@ -751,10 +565,6 @@ with i3:
         st.metric("Volume relativo", "N/D")
     else:
         st.metric("Volume relativo", f"{volume_ratio:.2f}x")
-
-with i4:
-    adx_display = "N/D" if np.isnan(adx_value) else f"{adx_value:.1f}"
-    st.metric("ADX 14 (força)", adx_display, adx_regime.split(" —")[0].split(" (")[0])
 
 # ---------------- Suporte / resistência ----------------
 st.markdown("#### 🎯 Níveis técnicos")
@@ -805,10 +615,6 @@ rsi_text = (
     "RSI em zona intermediária."
 )
 
-filtro_adx_txt = "✅ liberado" if trend_ok else "🚫 bloqueado (mercado lateralizado)"
-filtro_di_txt = "✅ fluxo confirma" if di_agrees else "🚫 fluxo (DI) diverge do score"
-filtro_persist_txt = "✅ direção estável" if persistence_ok else "🚫 direção mudou recentemente (possível ruído)"
-
 st.markdown(
     f"""
     <div class="analysis-box">
@@ -821,12 +627,6 @@ st.markdown(
         <b>Sinal MACD:</b> {last['macd_signal']:.4f}<br>
         <b>Estrutura:</b> {structure_status} &nbsp; | &nbsp;
         <b>VWAP:</b> {float(last['vwap']):.2f}
-    </div>
-    <div class="analysis-box">
-        <b>🧪 Filtros de ruído aplicados ao sinal:</b><br>
-        <b>ADX ({adx_regime}):</b> {filtro_adx_txt}<br>
-        <b>+DI/-DI:</b> {filtro_di_txt}<br>
-        <b>Persistência (últimos candles):</b> {filtro_persist_txt}
     </div>
     """,
     unsafe_allow_html=True
