@@ -70,22 +70,71 @@ periods = st.sidebar.slider(
     min_value=100, max_value=1000, value=300, step=50
 )
 
-# API key opcional via Streamlit Secrets
-api_key = ""
+# API key: mantém suporte ao Streamlit Secrets e permite
+# inserir a chave diretamente pela barra lateral.
+secret_api_key = ""
 try:
-    api_key = st.secrets.get("TWELVEDATA_API_KEY", "")
+    secret_api_key = st.secrets.get("TWELVEDATA_API_KEY", "")
 except Exception:
-    api_key = ""
+    secret_api_key = ""
 
 st.sidebar.markdown("---")
+st.sidebar.markdown("### 🔑 Twelve Data")
+api_key_input = st.sidebar.text_input(
+    "TWELVEDATA API KEY",
+    value=secret_api_key,
+    type="password",
+    help="Cole aqui sua chave da Twelve Data. A chave também pode ficar em .streamlit/secrets.toml."
+)
+api_key = api_key_input.strip() or secret_api_key
+
 st.sidebar.markdown("### 📡 Dados reais")
 st.sidebar.info(
     "Com TWELVEDATA_API_KEY: usa XAU/USD via Twelve Data. "
     "Sem chave: tenta Yahoo Finance."
 )
 st.sidebar.caption(
-    "Para dados de mercado via Twelve Data, coloque "
-    "`TWELVEDATA_API_KEY` em `.streamlit/secrets.toml`."
+    "Você pode colocar a chave nesta caixa ou em "
+    "`.streamlit/secrets.toml`."
+)
+
+
+# ---------------- TradingView — gráfico visual ----------------
+# Mantido separado do cálculo da estratégia:
+# o TradingView serve para visualização, enquanto os sinais continuam
+# sendo calculados pelos candles recebidos pela fonte de dados.
+st.markdown("### 📈 Gráfico TradingView")
+
+tv_symbol_js = symbol_tv.replace(":", "%3A")
+tv_embed_url = (
+    "https://www.tradingview.com/widgetembed/?"
+    f"symbol={tv_symbol_js}"
+    f"&interval={tv_interval}"
+    "&hidesidetoolbar=0"
+    "&symboledit=1"
+    "&saveimage=1"
+    "&toolbarbg=f1f3f6"
+    "&studies=[]"
+    "&theme=dark"
+    "&style=1"
+    "&timezone=America%2FSao_Paulo"
+    "&withdateranges=1"
+    "&hideideas=1"
+)
+
+components.html(
+    f"""
+    <div style="width:100%;height:620px;">
+        <iframe
+            src="{tv_embed_url}"
+            style="width:100%;height:100%;border:0;"
+            allowtransparency="true"
+            frameborder="0"
+            scrolling="no">
+        </iframe>
+    </div>
+    """,
+    height=620,
 )
 
 # ---------------- Indicadores ----------------
@@ -303,14 +352,19 @@ structure_low = float(df["low"].iloc[-structure_lookback:-1].min())
 breakout_up = price > structure_high
 breakout_down = price < structure_low
 
-
 # ---------------- Filtros adicionais da V2 ----------------
 def adx_calc(data, period=14):
     high, low, close = data["high"], data["low"], data["close"]
     up = high.diff()
     down = -low.diff()
-    plus_dm = pd.Series(np.where((up > down) & (up > 0), up, 0.0), index=data.index)
-    minus_dm = pd.Series(np.where((down > up) & (down > 0), down, 0.0), index=data.index)
+    plus_dm = pd.Series(
+        np.where((up > down) & (up > 0), up, 0.0),
+        index=data.index
+    )
+    minus_dm = pd.Series(
+        np.where((down > up) & (down > 0), down, 0.0),
+        index=data.index
+    )
     prev_close = close.shift(1)
     tr = pd.concat([
         high - low,
@@ -328,10 +382,12 @@ df["adx"], df["plus_di"], df["minus_di"] = adx_calc(df, 14)
 def price_action_flags(data):
     if len(data) < 3:
         return {"bullish": False, "bearish": False}
+
     a, b = data.iloc[-2], data.iloc[-1]
     a_body = abs(a["close"] - a["open"])
     b_body = abs(b["close"] - b["open"])
     b_range = max(b["high"] - b["low"], 1e-9)
+
     bull_pin = (
         b["close"] > b["open"]
         and (min(b["open"], b["close"]) - b["low"]) >= b_body * 1.5
@@ -352,18 +408,27 @@ def price_action_flags(data):
         and b["open"] >= a["close"] and b["close"] <= a["open"]
         and b_body >= a_body
     )
-    return {"bullish": bool(bull_pin or bull_engulf), "bearish": bool(bear_pin or bear_engulf)}
+    return {
+        "bullish": bool(bull_pin or bull_engulf),
+        "bearish": bool(bear_pin or bear_engulf)
+    }
 
 pa = price_action_flags(df)
 adx_value = float(last["adx"])
 plus_di_value = float(last["plus_di"])
 minus_di_value = float(last["minus_di"])
 
-# Reteste do rompimento: preço volta ao nível rompido e fecha novamente a favor.
+# Rompimento + reteste.
 retest_tolerance = max(atr_value * 0.35, price * 0.00035)
 recent6 = df.tail(min(6, len(df)))
-bull_retest = bool((recent6["low"] <= structure_high + retest_tolerance).any() and price > structure_high)
-bear_retest = bool((recent6["high"] >= structure_low - retest_tolerance).any() and price < structure_low)
+bull_retest = bool(
+    (recent6["low"] <= structure_high + retest_tolerance).any()
+    and price > structure_high
+)
+bear_retest = bool(
+    (recent6["high"] >= structure_low - retest_tolerance).any()
+    and price < structure_low
+)
 
 # Filtro de preço muito esticado.
 ema21_value = float(last["ema21"])
@@ -371,24 +436,37 @@ vwap_now = float(last["vwap"])
 stretch_ema_atr = abs(price - ema21_value) / max(atr_value, 1e-9)
 stretch_vwap_atr = abs(price - vwap_now) / max(atr_value, 1e-9)
 stretched = bool(
-    stretch_ema_atr >= 2.2 or stretch_vwap_atr >= 2.5
-    or price >= float(last["bb_upper"]) or price <= float(last["bb_lower"])
+    stretch_ema_atr >= 2.2
+    or stretch_vwap_atr >= 2.5
+    or price >= float(last["bb_upper"])
+    or price <= float(last["bb_lower"])
 )
 
-# Confirmação 15m + 1h. Usa a mesma função de dados existente, sem alterar a API.
+# Confirmação 15m + 1h.
 confirm15_df, confirm15_source = get_market_data("15min", max(periods, 200))
 if confirm15_df is not None and len(confirm15_df) >= 60:
     confirm15_df = confirm15_df.copy()
-    # Os indicadores já existentes são recalculados somente nesta série de confirmação.
     confirm15_df["ema9"] = confirm15_df["close"].ewm(span=9, adjust=False).mean()
     confirm15_df["ema21"] = confirm15_df["close"].ewm(span=21, adjust=False).mean()
     confirm15_df["ema50"] = confirm15_df["close"].ewm(span=50, adjust=False).mean()
-    confirm15_df["macd"] = confirm15_df["close"].ewm(span=12, adjust=False).mean() - confirm15_df["close"].ewm(span=26, adjust=False).mean()
+    confirm15_df["macd"] = (
+        confirm15_df["close"].ewm(span=12, adjust=False).mean()
+        - confirm15_df["close"].ewm(span=26, adjust=False).mean()
+    )
     confirm15_df["macd_signal"] = confirm15_df["macd"].ewm(span=9, adjust=False).mean()
     confirm15_df["adx"], confirm15_df["plus_di"], confirm15_df["minus_di"] = adx_calc(confirm15_df, 14)
+
     c15 = confirm15_df.iloc[-1]
-    m15_bull = bool(c15["ema9"] > c15["ema21"] > c15["ema50"] and c15["macd"] > c15["macd_signal"] and c15["adx"] >= 20)
-    m15_bear = bool(c15["ema9"] < c15["ema21"] < c15["ema50"] and c15["macd"] < c15["macd_signal"] and c15["adx"] >= 20)
+    m15_bull = bool(
+        c15["ema9"] > c15["ema21"] > c15["ema50"]
+        and c15["macd"] > c15["macd_signal"]
+        and c15["adx"] >= 20
+    )
+    m15_bear = bool(
+        c15["ema9"] < c15["ema21"] < c15["ema50"]
+        and c15["macd"] < c15["macd_signal"]
+        and c15["adx"] >= 20
+    )
 else:
     m15_bull = m15_bear = False
     confirm15_source = "Indisponível"
@@ -399,12 +477,24 @@ if confirm1h_df is not None and len(confirm1h_df) >= 60:
     confirm1h_df["ema9"] = confirm1h_df["close"].ewm(span=9, adjust=False).mean()
     confirm1h_df["ema21"] = confirm1h_df["close"].ewm(span=21, adjust=False).mean()
     confirm1h_df["ema50"] = confirm1h_df["close"].ewm(span=50, adjust=False).mean()
-    confirm1h_df["macd"] = confirm1h_df["close"].ewm(span=12, adjust=False).mean() - confirm1h_df["close"].ewm(span=26, adjust=False).mean()
+    confirm1h_df["macd"] = (
+        confirm1h_df["close"].ewm(span=12, adjust=False).mean()
+        - confirm1h_df["close"].ewm(span=26, adjust=False).mean()
+    )
     confirm1h_df["macd_signal"] = confirm1h_df["macd"].ewm(span=9, adjust=False).mean()
     confirm1h_df["adx"], confirm1h_df["plus_di"], confirm1h_df["minus_di"] = adx_calc(confirm1h_df, 14)
+
     c1h = confirm1h_df.iloc[-1]
-    h1_bull = bool(c1h["ema9"] > c1h["ema21"] > c1h["ema50"] and c1h["macd"] > c1h["macd_signal"] and c1h["adx"] >= 20)
-    h1_bear = bool(c1h["ema9"] < c1h["ema21"] < c1h["ema50"] and c1h["macd"] < c1h["macd_signal"] and c1h["adx"] >= 20)
+    h1_bull = bool(
+        c1h["ema9"] > c1h["ema21"] > c1h["ema50"]
+        and c1h["macd"] > c1h["macd_signal"]
+        and c1h["adx"] >= 20
+    )
+    h1_bear = bool(
+        c1h["ema9"] < c1h["ema21"] < c1h["ema50"]
+        and c1h["macd"] < c1h["macd_signal"]
+        and c1h["adx"] >= 20
+    )
 else:
     h1_bull = h1_bear = False
     confirm1h_source = "Indisponível"
@@ -437,8 +527,14 @@ check_buy(adx_value >= 20 and plus_di_value > minus_di_value, 12, f"ADX {adx_val
 check_sell(adx_value >= 20 and minus_di_value > plus_di_value, 12, f"ADX {adx_value:.1f} + DI vendedor")
 check_buy(price > vwap_now, 10, "Preço acima da VWAP")
 check_sell(price < vwap_now, 10, "Preço abaixo da VWAP")
-check_buy(last["macd"] > last["macd_signal"] and last["macd_hist"] > 0, 10, "MACD comprador")
-check_sell(last["macd"] < last["macd_signal"] and last["macd_hist"] < 0, 10, "MACD vendedor")
+check_buy(
+    last["macd"] > last["macd_signal"] and last["macd_hist"] > 0,
+    10, "MACD comprador"
+)
+check_sell(
+    last["macd"] < last["macd_signal"] and last["macd_hist"] < 0,
+    10, "MACD vendedor"
+)
 check_buy(50 <= rsi_value <= 68, 8, f"RSI favorável {rsi_value:.1f}")
 check_sell(32 <= rsi_value <= 50, 8, f"RSI favorável {rsi_value:.1f}")
 check_buy(pa["bullish"], 10, "Price Action bullish")
@@ -472,19 +568,43 @@ score_gap = abs(buy_score - sell_score)
 min_entry_score = 65
 
 if not trend_ok:
-    status, signal, status_reason = "EVITAR", "NEUTRO", f"ADX {adx_value:.1f} abaixo de 20: mercado sem tendência suficiente."
-elif stretched and ((price > ema21_value and buy_score > sell_score) or (price < ema21_value and sell_score > buy_score)):
-    status, signal, status_reason = "EVITAR", "NEUTRO", "Preço excessivamente esticado; aguarde correção."
+    status, signal, status_reason = (
+        "EVITAR", "NEUTRO",
+        f"ADX {adx_value:.1f} abaixo de 20: mercado sem tendência suficiente."
+    )
+elif stretched and (
+    (price > ema21_value and buy_score > sell_score)
+    or (price < ema21_value and sell_score > buy_score)
+):
+    status, signal, status_reason = (
+        "EVITAR", "NEUTRO",
+        "Preço excessivamente esticado; aguarde correção."
+    )
 elif breakout_up and not bull_retest:
-    status, signal, status_reason = "AGUARDAR PULLBACK", "COMPRA", "Rompimento de alta detectado, aguardando reteste."
+    status, signal, status_reason = (
+        "AGUARDAR PULLBACK", "COMPRA",
+        "Rompimento de alta detectado, aguardando reteste."
+    )
 elif breakout_down and not bear_retest:
-    status, signal, status_reason = "AGUARDAR PULLBACK", "VENDA", "Rompimento de baixa detectado, aguardando reteste."
+    status, signal, status_reason = (
+        "AGUARDAR PULLBACK", "VENDA",
+        "Rompimento de baixa detectado, aguardando reteste."
+    )
 elif buy_score >= min_entry_score and buy_score > sell_score + 8 and m15_bull and h1_bull:
-    status, signal, status_reason = "ENTRADA", "COMPRA", "Score comprador + 15m + 1h + tendência alinhados."
+    status, signal, status_reason = (
+        "ENTRADA", "COMPRA",
+        "Score comprador + 15m + 1h + tendência alinhados."
+    )
 elif sell_score >= min_entry_score and sell_score > buy_score + 8 and m15_bear and h1_bear:
-    status, signal, status_reason = "ENTRADA", "VENDA", "Score vendedor + 15m + 1h + tendência alinhados."
+    status, signal, status_reason = (
+        "ENTRADA", "VENDA",
+        "Score vendedor + 15m + 1h + tendência alinhados."
+    )
 elif max(buy_score, sell_score) >= 50 and score_gap < 10:
-    status, signal, status_reason = "EVITAR", "NEUTRO", "Compra e venda estão sem vantagem clara."
+    status, signal, status_reason = (
+        "EVITAR", "NEUTRO",
+        "Compra e venda estão sem vantagem clara."
+    )
 else:
     status = "AGUARDAR PULLBACK"
     signal = "COMPRA" if buy_score > sell_score else "VENDA"
@@ -651,10 +771,10 @@ with c3:
     st.metric("ATR 14", f"{atr_value:.2f}")
 
 with c4:
-    st.metric("COMPRA", f"{buy_score}/100")
+    st.metric("SCORE", f"{score:+d}/100")
 
 # ---------------- Sinal ----------------
-badge_class = "green" if status == "ENTRADA" else "blue" if status == "AGUARDAR PULLBACK" else "red"
+badge_class = "green" if signal == "COMPRA" else "red" if signal == "VENDA" else "gray"
 
 st.markdown(
     f"""
@@ -673,19 +793,6 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
-
-st.markdown(
-    f'<div class="analysis-box"><b>Status:</b> {status} &nbsp; | &nbsp; '
-    f'<b>Motivo:</b> {status_reason} &nbsp; | &nbsp; '
-    f'<b>Compra:</b> {buy_score}/100 &nbsp; | &nbsp; <b>Venda:</b> {sell_score}/100</div>',
-    unsafe_allow_html=True
-)
-
-with st.expander("🧠 Por que o sinal foi aprovado/recusado"):
-    st.markdown("**COMPRA**")
-    st.write("\n".join(buy_reasons))
-    st.markdown("**VENDA**")
-    st.write("\n".join(sell_reasons))
 
 p1, p2, p3 = st.columns(3)
 
