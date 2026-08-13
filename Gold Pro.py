@@ -379,6 +379,11 @@ def adx_calc(data, period=14):
 
 df["adx"], df["plus_di"], df["minus_di"] = adx_calc(df, 14)
 
+# Recarrega a última linha após adicionar os indicadores da V2.
+# O objeto `last` criado anteriormente é uma cópia da linha e não
+# recebe automaticamente as novas colunas.
+last = df.iloc[-1]
+
 def price_action_flags(data):
     if len(data) < 3:
         return {"bullish": False, "bearish": False}
