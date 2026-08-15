@@ -7,6 +7,59 @@ import numpy as np
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 
+
+# ============================================================
+# GEX PRO V2.1 — CAMADA PROFISSIONAL
+# Contexto adicional, sem substituir a lógica existente.
+# ============================================================
+def gex_professional_context(df, price, support, resistance, atr_value):
+    lookback = min(20, max(5, len(df) - 2))
+    w = df.iloc[-lookback-1:-1]
+
+    recent_high = float(w["high"].max())
+    recent_low = float(w["low"].min())
+
+    candle_range = max(
+        float(df.iloc[-1]["high"] - df.iloc[-1]["low"]), 1e-9
+    )
+    upper_wick = float(
+        df.iloc[-1]["high"] -
+        max(df.iloc[-1]["open"], df.iloc[-1]["close"])
+    )
+    lower_wick = float(
+        min(df.iloc[-1]["open"], df.iloc[-1]["close"]) -
+        df.iloc[-1]["low"]
+    )
+
+    sweep_buy = (
+        float(df.iloc[-1]["low"]) < recent_low
+        and float(df.iloc[-1]["close"]) > recent_low
+        and lower_wick >= candle_range * 0.30
+    )
+    sweep_sell = (
+        float(df.iloc[-1]["high"]) > recent_high
+        and float(df.iloc[-1]["close"]) < recent_high
+        and upper_wick >= candle_range * 0.30
+    )
+
+    ranges = (df["high"] - df["low"]).tail(20)
+    median_range = float(ranges.median()) if not ranges.empty else candle_range
+    impulsive = candle_range > max(median_range * 2.0, atr_value * 1.8)
+
+    room_up = max(float(resistance) - price, 0.0)
+    room_down = max(price - float(support), 0.0)
+
+    return {
+        "sweep_buy": bool(sweep_buy),
+        "sweep_sell": bool(sweep_sell),
+        "impulsive": bool(impulsive),
+        "room_up": room_up,
+        "room_down": room_down,
+        "near_support": abs(price - float(support)) <= atr_value * 0.50,
+        "near_resistance": abs(float(resistance) - price) <= atr_value * 0.50,
+    }
+
+
 # ============================================================
 # GEX PRO — ANÁLISE REAL DO XAUUSD
 # ============================================================
@@ -865,6 +918,277 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+
+# GEX_PRO_CONTEXT_ATIVO
+try:
+    _gex_ctx = gex_professional_context(
+        df, price, support, resistance, atr_value
+    )
+
+    st.markdown("### 🧠 Contexto Profissional V2.1")
+    _c1, _c2, _c3, _c4 = st.columns(4)
+
+    with _c1:
+        _liq = (
+            "COMPRA" if _gex_ctx["sweep_buy"]
+            else "VENDA" if _gex_ctx["sweep_sell"]
+            else "NORMAL"
+        )
+        st.metric("Liquidez", _liq)
+
+    with _c2:
+        st.metric(
+            "Movimento",
+            "IMPULSIVO" if _gex_ctx["impulsive"] else "NORMAL"
+        )
+
+    with _c3:
+        st.metric(
+            "Espaço ↑",
+            f'{_gex_ctx["room_up"] / max(atr_value, 1e-9):.2f} ATR'
+        )
+
+    with _c4:
+        st.metric(
+            "Espaço ↓",
+            f'{_gex_ctx["room_down"] / max(atr_value, 1e-9):.2f} ATR'
+        )
+
+    if _gex_ctx["impulsive"]:
+        st.warning(
+            "⚠️ Movimento impulsivo detectado: aguardar pullback/reteste."
+        )
+    elif _gex_ctx["sweep_buy"]:
+        st.success("💧 Sweep de liquidez comprador detectado.")
+    elif _gex_ctx["sweep_sell"]:
+        st.error("💧 Sweep de liquidez vendedor detectado.")
+    else:
+        st.info("ℹ️ Nenhum sweep relevante no candle atual.")
+except Exception:
+    pass
+
+
+
+# ============================================================
+# GEX PRO V2.2 — BACKTEST E ESTATÍSTICAS
+# Usa somente dados históricos já carregados pelo aplicativo.
+# Não altera o TradingView nem o motor de sinal existente.
+# ============================================================
+# GEX_PRO_BACKTEST_V22
+
+def gex_backtest(df, lookahead=12, atr_mult=1.0, rr=2.0, min_score=60):
+    """Backtest conservador baseado na direção futura após um sinal técnico.
+    Retorna trades e métricas. Não usa informação futura no candle do sinal."""
+    import numpy as np
+    import pandas as pd
+
+    if df is None or len(df) < lookahead + 30:
+        return pd.DataFrame(), {}
+
+    rows = []
+    close = df["close"].astype(float).to_numpy()
+    high = df["high"].astype(float).to_numpy()
+    low = df["low"].astype(float).to_numpy()
+
+    # ATR aproximado usando série disponível, sem look-ahead.
+    prev_close = df["close"].shift(1)
+    tr = pd.concat([
+        df["high"] - df["low"],
+        (df["high"] - prev_close).abs(),
+        (df["low"] - prev_close).abs()
+    ], axis=1).max(axis=1)
+    atr = tr.rolling(14).mean().to_numpy()
+
+    ema9 = df["close"].ewm(span=9, adjust=False).mean().to_numpy()
+    ema21 = df["close"].ewm(span=21, adjust=False).mean().to_numpy()
+    ema50 = df["close"].ewm(span=50, adjust=False).mean().to_numpy()
+
+    # RSI.
+    delta = df["close"].diff()
+    gain = delta.clip(lower=0).rolling(14).mean()
+    loss = (-delta.clip(upper=0)).rolling(14).mean()
+    rs = gain / loss.replace(0, np.nan)
+    rsi = (100 - (100 / (1 + rs))).to_numpy()
+
+    # Backtest simples e auditável:
+    # BUY quando EMA9 > EMA21 > EMA50 e RSI >= 50.
+    # SELL quando EMA9 < EMA21 < EMA50 e RSI <= 50.
+    # Score = força relativa das condições.
+    for i in range(50, len(df) - lookahead):
+        if not np.isfinite(atr[i]) or atr[i] <= 0:
+            continue
+
+        bull = ema9[i] > ema21[i] > ema50[i]
+        bear = ema9[i] < ema21[i] < ema50[i]
+
+        if not bull and not bear:
+            continue
+
+        score = 50
+        if bull and rsi[i] >= 50:
+            score += 25
+        elif bear and rsi[i] <= 50:
+            score += 25
+
+        trend_gap = abs(ema9[i] - ema50[i]) / atr[i]
+        if trend_gap >= 0.5:
+            score += 15
+        if trend_gap >= 1.0:
+            score += 10
+
+        score = min(100, score)
+        if score < min_score:
+            continue
+
+        entry = close[i]
+        risk = atr[i] * atr_mult
+
+        if bull:
+            direction = "COMPRA"
+            stop = entry - risk
+            target = entry + risk * rr
+        else:
+            direction = "VENDA"
+            stop = entry + risk
+            target = entry - risk * rr
+
+        result = "TIMEOUT"
+        exit_price = close[min(i + lookahead, len(df) - 1)]
+        exit_i = min(i + lookahead, len(df) - 1)
+
+        for j in range(i + 1, i + lookahead + 1):
+            if direction == "COMPRA":
+                hit_stop = low[j] <= stop
+                hit_target = high[j] >= target
+            else:
+                hit_stop = high[j] >= stop
+                hit_target = low[j] <= target
+
+            # Quando stop e alvo aparecem no mesmo candle, assume stop primeiro:
+            # é a hipótese conservadora sem dados intrabar.
+            if hit_stop and hit_target:
+                result = "LOSS"
+                exit_price = stop
+                exit_i = j
+                break
+            if hit_stop:
+                result = "LOSS"
+                exit_price = stop
+                exit_i = j
+                break
+            if hit_target:
+                result = "WIN"
+                exit_price = target
+                exit_i = j
+                break
+
+        if result == "WIN":
+            r_multiple = rr
+        elif result == "LOSS":
+            r_multiple = -1.0
+        else:
+            if direction == "COMPRA":
+                r_multiple = (exit_price - entry) / risk
+            else:
+                r_multiple = (entry - exit_price) / risk
+
+        rows.append({
+            "entrada": df.index[i],
+            "saida": df.index[exit_i],
+            "direcao": direction,
+            "score": score,
+            "entrada_preco": entry,
+            "stop": stop,
+            "alvo": target,
+            "resultado": result,
+            "R": float(r_multiple),
+        })
+
+    trades = pd.DataFrame(rows)
+
+    if trades.empty:
+        return trades, {
+            "trades": 0, "wins": 0, "losses": 0,
+            "win_rate": 0.0, "profit_factor": 0.0,
+            "net_R": 0.0, "max_drawdown_R": 0.0,
+            "expectancy_R": 0.0
+        }
+
+    wins = int((trades["resultado"] == "WIN").sum())
+    losses = int((trades["resultado"] == "LOSS").sum())
+    total = len(trades)
+
+    gross_profit = float(trades.loc[trades["R"] > 0, "R"].sum())
+    gross_loss = abs(float(trades.loc[trades["R"] < 0, "R"].sum()))
+    profit_factor = gross_profit / gross_loss if gross_loss > 0 else float("inf")
+
+    equity = trades["R"].cumsum()
+    drawdown = equity - equity.cummax()
+
+    metrics = {
+        "trades": total,
+        "wins": wins,
+        "losses": losses,
+        "timeouts": int((trades["resultado"] == "TIMEOUT").sum()),
+        "win_rate": wins / total * 100,
+        "profit_factor": profit_factor,
+        "net_R": float(trades["R"].sum()),
+        "max_drawdown_R": float(drawdown.min()),
+        "expectancy_R": float(trades["R"].mean()),
+        "avg_win_R": float(trades.loc[trades["R"] > 0, "R"].mean()) if wins else 0.0,
+        "avg_loss_R": float(trades.loc[trades["R"] < 0, "R"].mean()) if losses else 0.0,
+    }
+    return trades, metrics
+
+
+def gex_render_backtest(df):
+    import pandas as pd
+    import streamlit as st
+
+    st.markdown("### 📊 Backtest — GEX PRO V2.2")
+
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        lookahead = st.slider("Candles para resultado", 4, 48, 12)
+    with col_b:
+        rr = st.slider("R:R", 1.0, 5.0, 2.0, 0.5)
+    with col_c:
+        min_score = st.slider("Score mínimo", 50, 90, 60, 5)
+
+    trades, m = gex_backtest(
+        df,
+        lookahead=lookahead,
+        rr=rr,
+        min_score=min_score
+    )
+
+    if not m or m["trades"] == 0:
+        st.warning("Não há trades suficientes para calcular estatísticas.")
+        return
+
+    a, b, c, d = st.columns(4)
+    a.metric("Trades", m["trades"])
+    b.metric("Win rate", f'{m["win_rate"]:.1f}%')
+    c.metric("Profit factor", f'{m["profit_factor"]:.2f}')
+    d.metric("Resultado", f'{m["net_R"]:.2f} R')
+
+    e, f, g = st.columns(3)
+    e.metric("Expectativa", f'{m["expectancy_R"]:.3f} R')
+    f.metric("Drawdown máx.", f'{m["max_drawdown_R"]:.2f} R')
+    g.metric("Vitórias / Derrotas", f'{m["wins"]} / {m["losses"]}')
+
+    equity = trades["R"].cumsum()
+    chart_df = pd.DataFrame({"Equity (R)": equity.to_numpy()})
+    st.line_chart(chart_df)
+
+    st.markdown("#### Últimas operações do backtest")
+    st.dataframe(
+        trades.tail(100),
+        use_container_width=True,
+        hide_index=True
+    )
+
+
 # ---------------- Diagnóstico ----------------
 if signal == "COMPRA":
     perfil = "Viés comprador: médias e momentum favorecem alta."
@@ -916,3 +1240,11 @@ st.markdown(
     'Os valores de entrada, stop e take são cálculos técnicos, não garantia de resultado.</div>',
     unsafe_allow_html=True
 )
+
+
+# ---------------- Backtest V2.2 ----------------
+if st.checkbox("📊 Abrir Backtest e Estatísticas Reais", value=False):
+    try:
+        gex_render_backtest(df)
+    except Exception as _bt_err:
+        st.error(f"Erro no backtest: {_bt_err}")
