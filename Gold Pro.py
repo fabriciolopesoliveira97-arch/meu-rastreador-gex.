@@ -1189,6 +1189,218 @@ def gex_render_backtest(df):
     )
 
 
+
+# ============================================================
+# GEX PRO V2.3 — BACKTEST DO MOTOR COMPLETO
+# GEX_PRO_V23_COMPLETO
+# ============================================================
+def gex_v23_full_backtest(df, lookahead=12, rr=2.0, atr_mult=1.0, min_score=60):
+    import numpy as np
+    import pandas as pd
+
+    if df is None or len(df) < 120:
+        return pd.DataFrame(), {"trades": 0}
+
+    d = df.copy()
+    c = d["close"].astype(float)
+    h = d["high"].astype(float)
+    l = d["low"].astype(float)
+
+    e9 = c.ewm(span=9, adjust=False).mean()
+    e21 = c.ewm(span=21, adjust=False).mean()
+    e50 = c.ewm(span=50, adjust=False).mean()
+
+    pc = c.shift(1)
+    tr = pd.concat([h-l, (h-pc).abs(), (l-pc).abs()], axis=1).max(axis=1)
+    atr = tr.rolling(14).mean()
+
+    delta = c.diff()
+    gain = delta.clip(lower=0).rolling(14).mean()
+    loss = (-delta.clip(upper=0)).rolling(14).mean()
+    rs = gain / loss.replace(0, np.nan)
+    rsi = 100 - 100 / (1 + rs)
+
+    macd = c.ewm(span=12, adjust=False).mean() - c.ewm(span=26, adjust=False).mean()
+    macd_sig = macd.ewm(span=9, adjust=False).mean()
+
+    vol = d["volume"].astype(float) if "volume" in d.columns else pd.Series(1.0, index=d.index)
+    vwap = (c * vol).cumsum() / vol.replace(0, np.nan).cumsum()
+
+    rows = []
+    for i in range(60, len(d) - lookahead):
+        a = float(atr.iloc[i])
+        p = float(c.iloc[i])
+        if not np.isfinite(a) or a <= 0:
+            continue
+
+        buy = sell = 0
+        br, sr = [], []
+
+        if e9.iloc[i] > e21.iloc[i]:
+            buy += 12; br.append("EMA9>EMA21")
+        elif e9.iloc[i] < e21.iloc[i]:
+            sell += 12; sr.append("EMA9<EMA21")
+
+        if e21.iloc[i] > e50.iloc[i]:
+            buy += 10; br.append("EMA21>EMA50")
+        elif e21.iloc[i] < e50.iloc[i]:
+            sell += 10; sr.append("EMA21<EMA50")
+
+        if rsi.iloc[i] >= 50:
+            buy += 8; br.append("RSI")
+        elif rsi.iloc[i] <= 50:
+            sell += 8; sr.append("RSI")
+
+        if np.isfinite(vwap.iloc[i]):
+            if p > vwap.iloc[i]:
+                buy += 8; br.append("VWAP")
+            elif p < vwap.iloc[i]:
+                sell += 8; sr.append("VWAP")
+
+        if macd.iloc[i] > macd_sig.iloc[i]:
+            buy += 8; br.append("MACD")
+        elif macd.iloc[i] < macd_sig.iloc[i]:
+            sell += 8; sr.append("MACD")
+
+        rh = float(h.iloc[i-20:i].max())
+        rl = float(l.iloc[i-20:i].min())
+        rng = max(float(h.iloc[i]-l.iloc[i]), 1e-9)
+        uw = float(h.iloc[i] - max(d["open"].iloc[i], c.iloc[i]))
+        lw = float(min(d["open"].iloc[i], c.iloc[i]) - l.iloc[i])
+
+        if p > rh:
+            buy += 10; br.append("Rompimento")
+        elif p < rl:
+            sell += 10; sr.append("Rompimento")
+
+        if l.iloc[i] < rl and c.iloc[i] > rl and lw >= rng*.30:
+            buy += 8; br.append("Sweep")
+        if h.iloc[i] > rh and c.iloc[i] < rh and uw >= rng*.30:
+            sell += 8; sr.append("Sweep")
+
+        buy, sell = min(100, buy), min(100, sell)
+        if max(buy, sell) < min_score or abs(buy-sell) < 8:
+            continue
+
+        if buy > sell:
+            direction, score = "COMPRA", buy
+            entry, stop, target = p, p-a*atr_mult, p+a*atr_mult*rr
+            reasons = "; ".join(br)
+        else:
+            direction, score = "VENDA", sell
+            entry, stop, target = p, p+a*atr_mult, p-a*atr_mult*rr
+            reasons = "; ".join(sr)
+
+        result, exit_price, exit_i = "TIMEOUT", float(c.iloc[i+lookahead]), i+lookahead
+        for j in range(i+1, i+lookahead+1):
+            if direction == "COMPRA":
+                sl, tp = l.iloc[j] <= stop, h.iloc[j] >= target
+            else:
+                sl, tp = h.iloc[j] >= stop, l.iloc[j] <= target
+            # Conservador quando ambos ocorrem no mesmo candle.
+            if sl and tp:
+                result, exit_price, exit_i = "LOSS", stop, j
+                break
+            if sl:
+                result, exit_price, exit_i = "LOSS", stop, j
+                break
+            if tp:
+                result, exit_price, exit_i = "WIN", target, j
+                break
+
+        r_value = rr if result == "WIN" else -1.0 if result == "LOSS" else (
+            (exit_price-entry)/(a*atr_mult) if direction=="COMPRA"
+            else (entry-exit_price)/(a*atr_mult)
+        )
+        rows.append({
+            "entrada": d.index[i], "saida": d.index[exit_i],
+            "direcao": direction, "score": int(score),
+            "resultado": result, "R": float(r_value),
+            "motivos": reasons
+        })
+
+    trades = pd.DataFrame(rows)
+    if trades.empty:
+        return trades, {"trades": 0}
+
+    wins = int((trades.resultado=="WIN").sum())
+    losses = int((trades.resultado=="LOSS").sum())
+    gp = float(trades.loc[trades.R>0, "R"].sum())
+    gl = abs(float(trades.loc[trades.R<0, "R"].sum()))
+    eq = trades.R.cumsum()
+    dd = eq - eq.cummax()
+
+    return trades, {
+        "trades": len(trades), "wins": wins, "losses": losses,
+        "timeouts": int((trades.resultado=="TIMEOUT").sum()),
+        "win_rate": wins/len(trades)*100,
+        "profit_factor": gp/gl if gl else float("inf"),
+        "net_R": float(trades.R.sum()),
+        "expectancy_R": float(trades.R.mean()),
+        "max_drawdown_R": float(dd.min())
+    }
+
+def gex_v23_validation_report(df):
+    import pandas as pd
+    import streamlit as st
+
+    st.markdown("### 🧪 GEX PRO V2.3 — Validação completa")
+    if len(df) < 240:
+        st.warning("São necessários pelo menos 240 candles.")
+        return
+
+    split = int(len(df)*0.70)
+    train, test = df.iloc[:split].copy(), df.iloc[split:].copy()
+
+    c1,c2,c3 = st.columns(3)
+    with c1: rr = st.slider("R:R", 1.0, 4.0, 2.0, 0.5, key="v23_rr")
+    with c2: look = st.slider("Horizonte", 4, 48, 12, key="v23_look")
+    with c3: score = st.slider("Score mínimo", 50, 90, 60, 5, key="v23_score")
+
+    tr, tm = gex_v23_full_backtest(train, look, rr, 1.0, score)
+    te, em = gex_v23_full_backtest(test, look, rr, 1.0, score)
+
+    for title, m in [("Treino — 70%", tm), ("Validação fora da amostra — 30%", em)]:
+        st.markdown(f"#### {title}")
+        a,b,c,d = st.columns(4)
+        a.metric("Trades", m.get("trades",0))
+        b.metric("Win rate", f'{m.get("win_rate",0):.1f}%')
+        c.metric("Profit Factor", f'{m.get("profit_factor",0):.2f}')
+        d.metric("Resultado", f'{m.get("net_R",0):.2f} R')
+
+    if em.get("trades",0) >= 30 and em.get("profit_factor",0) > 1:
+        st.success("✅ Evidência inicial de vantagem na amostra fora da amostra.")
+    else:
+        st.warning("⚠️ Evidência insuficiente para considerar o sistema validado.")
+
+    if not te.empty:
+        tmp = te.copy()
+        bins=[0,59,69,79,89,100]
+        labels=["<60","60–69","70–79","80–89","90–100"]
+        tmp["faixa_score"] = pd.cut(tmp.score, bins=bins, labels=labels, include_lowest=True)
+
+        st.markdown("#### Desempenho por Score")
+        bys = tmp.groupby("faixa_score", observed=False).agg(
+            trades=("R","count"),
+            win_rate=("resultado", lambda x:(x=="WIN").mean()*100),
+            net_R=("R","sum"), expectativa_R=("R","mean")
+        ).reset_index()
+        st.dataframe(bys, use_container_width=True, hide_index=True)
+
+        st.markdown("#### COMPRA x VENDA")
+        byd = tmp.groupby("direcao").agg(
+            trades=("R","count"),
+            win_rate=("resultado", lambda x:(x=="WIN").mean()*100),
+            net_R=("R","sum"), expectativa_R=("R","mean")
+        ).reset_index()
+        st.dataframe(byd, use_container_width=True, hide_index=True)
+
+        st.markdown("#### Curva de resultado — validação")
+        st.line_chart(pd.DataFrame({"Equity (R)": tmp.R.cumsum().to_numpy()}))
+        with st.expander("Operações da validação"):
+            st.dataframe(tmp.tail(200), use_container_width=True, hide_index=True)
+
+
 # ---------------- Diagnóstico ----------------
 if signal == "COMPRA":
     perfil = "Viés comprador: médias e momentum favorecem alta."
@@ -1248,3 +1460,11 @@ if st.checkbox("📊 Abrir Backtest e Estatísticas Reais", value=False):
         gex_render_backtest(df)
     except Exception as _bt_err:
         st.error(f"Erro no backtest: {_bt_err}")
+
+
+# ---------------- V2.3 — Validação ----------------
+if st.checkbox("🧪 Abrir validação completa V2.3", value=False, key="v23_open"):
+    try:
+        gex_v23_validation_report(df)
+    except Exception as _v23_error:
+        st.error(f"Erro na validação V2.3: {_v23_error}")
